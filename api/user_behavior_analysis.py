@@ -1,109 +1,181 @@
 """
-用户行为分析API - 简化版本
+售后回访API（原用户行为分析API改造）
+
+面向售后运营：按客户手机号查询维修档案、生成保养/保修回访消息，
+并提供回访页运营统计（工单/订单/工程师/转人工概览）。
 """
 
-from fastapi import APIRouter, HTTPException
-from typing import Optional
+import logging
+from typing import Optional, List
+
+from fastapi import APIRouter
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/api/user-behavior", tags=["用户行为分析"])
-router_underscore = APIRouter(prefix="/api/user_behavior", tags=["用户行为分析"])
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/follow_ups", tags=["售后回访"])
+
+
+class AnalysisRequest(BaseModel):
+    """客户手机号查询请求"""
+    phone: str
 
 
 class UserAnalysisResponse(BaseModel):
-    """用户分析响应"""
+    """客户维修档案响应（键与 UserBehaviorAgent.get_user_analysis 对齐）"""
+    phone: str = ""
+    user_found: bool = False
+    user_name: Optional[str] = None
     favorite_engineer_id: Optional[int] = None
     favorite_engineer_name: Optional[str] = None
-    favorite_service: Optional[str] = None
-    favorite_duration: Optional[int] = None
-    total_appointments: int = 0
-    days_since_last_appointment: Optional[int] = None
+    favorite_product_type: Optional[str] = None
+    favorite_fault_desc: Optional[str] = None
+    favorite_time_slot: Optional[str] = None
+    total_repairs: int = 0
+    last_repair_date: Optional[str] = None
+    days_since_last_repair: Optional[int] = None
     should_send_reminder: bool = False
 
 
-async def get_user_analysis(user_id: str = "default_user") -> UserAnalysisResponse:
-    """获取用户行为分析数据"""
-    try:
-        from agents.user_behavior_agent import UserBehaviorAgent
-        
-        agent = UserBehaviorAgent()
-        analysis = agent.get_user_analysis(user_id)
-        
-        if not analysis:
-            return UserAnalysisResponse()
-        
-        # 获取技师姓名
-        engineer_name = None
-        if analysis.get('favorite_engineer_id'):
-            from db import EngineerDBRouter
-            db = EngineerDBRouter()
-            tech_info = db.get_engineer_by_id(analysis['favorite_engineer_id'])
-            if tech_info:
-                engineer_name = tech_info.get('name')
-        
-        return UserAnalysisResponse(
-            favorite_engineer_id=analysis.get('favorite_engineer_id'),
-            favorite_engineer_name=engineer_name,
-            favorite_service=analysis.get('favorite_service'),
-            favorite_duration=analysis.get('favorite_duration'),
-            total_appointments=analysis.get('total_appointments', 0),
-            days_since_last_appointment=analysis.get('days_since_last_appointment'),
-            should_send_reminder=analysis.get('should_send_reminder', False)
-        )
-    except Exception as e:
-        # 记录异常日志并返回空数据，而不是硬编码的假数据
-        import logging
-        logging.error(f"获取用户分析数据失败: {e}")
-        return UserAnalysisResponse()
-
-
-@router.get("/analysis", response_model=UserAnalysisResponse)
-async def get_default_user_analysis():
-    """获取默认用户的行为分析数据"""
-    return await get_user_analysis("default_user")
-
-
-@router.get("/dashboard_data", response_model=UserAnalysisResponse)
-async def get_dashboard_data():
-    """获取用户行为仪表板数据"""
-    return await get_user_analysis("default_user")
-
-
-@router_underscore.get("/dashboard_data", response_model=UserAnalysisResponse)
-async def get_dashboard_data_underscore():
-    """获取用户行为仪表板数据（下划线版本）"""
-    return await get_user_analysis("default_user")
-
-
 class ReminderRequest(BaseModel):
-    """发送提醒请求"""
-    user_id: str = "default_user"
+    """回访消息生成请求"""
+    phone: str
 
 
 class ReminderResponse(BaseModel):
-    """提醒消息响应"""
+    """回访消息响应"""
+    phone: str = ""
     message: str
-    engineer_available_times: Optional[list] = None
+    engineer_available_times: Optional[List[str]] = None
 
 
-@router.post("/send-reminder", response_model=ReminderResponse, summary="发送回访提醒")
-async def send_reminder(request: ReminderRequest):
-    """生成并返回回访提醒消息"""
+class StatsResponse(BaseModel):
+    """售后运营统计响应"""
+    total_orders: int = 0
+    total_tickets: int = 0
+    tickets_by_status: dict = {}
+    total_engineers: int = 0
+    total_handovers: int = 0
+
+
+async def get_user_analysis(phone: str = "13800138000") -> UserAnalysisResponse:
+    """按手机号获取客户维修档案分析"""
+    response = UserAnalysisResponse(phone=phone)
     try:
         from agents.user_behavior_agent import UserBehaviorAgent
-        
+
         agent = UserBehaviorAgent()
-        result = await agent.get_reminder_with_schedule(request.user_id)
-        
-        return ReminderResponse(
-            message=result["message"],
-            engineer_available_times=result["engineer_available_times"]
-        )
-        
+        analysis = agent.get_user_analysis(phone)
+
+        if not analysis or analysis.get('total_repairs', 0) == 0:
+            return response
+
+        # 查询客户姓名
+        user_name = None
+        try:
+            from services.order_service import OrderService
+            orders = OrderService().get_orders_by_phone(phone)
+            if orders and orders[0].get('user_name'):
+                user_name = orders[0]['user_name']
+        except Exception as e:
+            logger.warning(f"查询客户姓名失败: {e}")
+
+        # 查询常用工程师姓名
+        engineer_name = None
+        if analysis.get('favorite_engineer_id'):
+            try:
+                from services.engineer_service import EngineerService
+                tech = EngineerService().get_engineer_by_id(analysis['favorite_engineer_id'])
+                if tech:
+                    engineer_name = tech.get('name')
+            except Exception as e:
+                logger.warning(f"查询工程师姓名失败: {e}")
+
+        response.user_found = True
+        response.user_name = user_name
+        response.favorite_engineer_id = analysis.get('favorite_engineer_id')
+        response.favorite_engineer_name = engineer_name
+        response.favorite_product_type = analysis.get('favorite_product_type')
+        response.favorite_fault_desc = analysis.get('favorite_fault_desc')
+        response.favorite_time_slot = analysis.get('favorite_time_slot')
+        response.total_repairs = analysis.get('total_repairs', 0)
+        response.last_repair_date = analysis.get('last_repair_date')
+        response.days_since_last_repair = analysis.get('days_since_last_repair')
+        response.should_send_reminder = analysis.get('should_send_reminder', False)
+        return response
     except Exception as e:
-        import logging
-        logging.error(f"生成回访提醒失败: {e}")
+        logger.error(f"获取客户维修档案失败: {e}")
+        return response
+
+
+@router.post("/analysis", response_model=UserAnalysisResponse, summary="客户维修档案分析")
+async def analysis_endpoint(request: AnalysisRequest):
+    """按手机号获取客户的报修档案（常用品类/故障/时段/工程师）"""
+    return await get_user_analysis(request.phone)
+
+
+@router.post("/reminder", response_model=ReminderResponse, summary="生成回访消息")
+async def reminder_endpoint(request: ReminderRequest):
+    """生成保养/保修回访消息，并附带工程师今日可约上门时段（9:00-18:00）"""
+    try:
+        from agents.user_behavior_agent import UserBehaviorAgent
+
+        agent = UserBehaviorAgent()
+        result = await agent.get_reminder_with_schedule(request.phone)
+
+        if not result or not result.get("message"):
+            return ReminderResponse(
+                phone=request.phone,
+                message="尊敬的用户您好！系统暂未查询到您的报修记录，暂无法生成回访消息。如需售后帮助，请拨打全国服务热线 400-820-9000，或直接在聊天中报修。",
+                engineer_available_times=[]
+            )
         return ReminderResponse(
-            message="尊敬的Tom，您好！系统暂时无法查询技师时间，请稍后再试或直接联系我们预约。",
+            phone=request.phone,
+            message=result["message"],
+            engineer_available_times=result.get("engineer_available_times") or []
+        )
+    except Exception as e:
+        logger.error(f"生成回访消息失败: {e}")
+        return ReminderResponse(
+            phone=request.phone,
+            message="尊敬的客户您好！系统暂时无法生成回访消息，请稍后再试，或拨打全国服务热线 400-820-9000 咨询。",
             engineer_available_times=[]
         )
+
+
+@router.get("/stats", response_model=StatsResponse, summary="售后运营统计")
+async def stats_endpoint():
+    """售后运营概览：订单数、工单数（按状态）、工程师数、转人工记录数"""
+    stats = StatsResponse()
+    try:
+        from services.order_service import OrderService
+        from services.ticket_service import TicketService
+        from services.engineer_service import EngineerService
+        from services.handover_service import HandoverService
+
+        try:
+            stats.total_orders = len(OrderService().order_repo.get_all_orders() or [])
+        except Exception as e:
+            logger.warning(f"统计订单失败: {e}")
+
+        tickets = TicketService().list_tickets() or []
+        stats.total_tickets = len(tickets)
+        status_counts = {}
+        for t in tickets:
+            status = t.get('status', 'unknown')
+            status_counts[status] = status_counts.get(status, 0) + 1
+        stats.tickets_by_status = status_counts
+
+        try:
+            engineers = EngineerService().get_all_engineers() or []
+            stats.total_engineers = len(engineers)
+        except Exception as e:
+            logger.warning(f"统计工程师失败: {e}")
+
+        try:
+            stats.total_handovers = len(HandoverService().list_handovers(limit=500) or [])
+        except Exception as e:
+            logger.warning(f"统计转人工记录失败: {e}")
+    except Exception as e:
+        logger.error(f"获取运营统计失败: {e}")
+    return stats

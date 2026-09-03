@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安居家电 · 售后回访</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1100px; margin: 0 auto; background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(20px); border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden; border: 1px solid rgba(255,255,255,0.2);
+        }
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            padding: 30px; color: white; text-align: center; position: relative; overflow: hidden;
+        }
+        .header h2 {
+            font-size: 28px; font-weight: 600; margin-bottom: 10px;
+            display: flex; align-items: center; justify-content: center; gap: 15px;
+        }
+        .header p { font-size: 16px; opacity: 0.9; }
+        .content { padding: 30px; }
+        .stats-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px; margin-bottom: 30px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white; padding: 20px; border-radius: 15px; text-align: center;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+        }
+        .stat-card:nth-child(2) { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .stat-card:nth-child(3) { background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%); }
+        .stat-card:nth-child(4) { background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); }
+        .stat-card i { font-size: 24px; margin-bottom: 10px; }
+        .stat-card .number { font-size: 24px; font-weight: bold; margin-bottom: 5px; }
+        .stat-card .label { font-size: 14px; opacity: 0.9; }
+        .card {
+            background: white; border-radius: 15px; padding: 25px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin-bottom: 25px;
+        }
+        .card h3 {
+            color: #4facfe; margin-bottom: 15px; font-size: 18px;
+            display: flex; align-items: center; gap: 10px;
+        }
+        .search-row {
+            display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+        }
+        #phone-input {
+            flex: 1; min-width: 220px; padding: 12px 18px; font-size: 16px;
+            border: 2px solid rgba(0,0,0,0.1); border-radius: 12px; outline: none;
+            transition: all 0.3s ease; letter-spacing: 1px;
+        }
+        #phone-input:focus { border-color: #4facfe; box-shadow: 0 0 0 3px rgba(79,172,254,0.15); }
+        .btn {
+            padding: 12px 22px; border-radius: 12px; border: none; color: white;
+            font-size: 15px; font-weight: 500; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 8px;
+            transition: all 0.3s ease; box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn-primary { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .btn-primary:hover { box-shadow: 0 10px 30px rgba(79,172,254,0.4); }
+        .btn-success { background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%); }
+        .btn-success:hover { box-shadow: 0 10px 30px rgba(39,174,96,0.4); }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .profile-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 15px;
+        }
+        .profile-item {
+            background: linear-gradient(135deg, rgba(79,172,254,0.08), rgba(0,242,254,0.08));
+            border-radius: 12px; padding: 15px;
+        }
+        .profile-item .k { font-size: 12px; color: #888; margin-bottom: 6px; }
+        .profile-item .v { font-size: 15px; font-weight: 600; color: #333; }
+        .tag {
+            display: inline-block; background: rgba(79,172,254,0.12); color: #2b6cb0;
+            padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 500;
+        }
+        .tag.warn { background: rgba(245,158,11,0.15); color: #d97706; }
+        .reminder-message {
+            background: linear-gradient(135deg, #f8f9fa, #ffffff);
+            border-left: 4px solid #4facfe; border-radius: 10px;
+            padding: 18px 20px; font-size: 15px; line-height: 1.8; color: #333;
+            white-space: pre-wrap; font-weight: 500;
+        }
+        .slot-list { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+        .slot-chip {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white; padding: 8px 16px; border-radius: 20px;
+            font-size: 14px; font-weight: 600; box-shadow: 0 4px 12px rgba(79,172,254,0.25);
+        }
+        .placeholder { color: #aaa; font-size: 14px; }
+        .hint { color: #999; font-size: 13px; margin-top: 10px; }
+        .empty-tip { text-align: center; padding: 30px 10px; color: #999; }
+        .empty-tip i { font-size: 40px; color: #ddd; margin-bottom: 12px; display: block; }
+        .actions { text-align: center; margin-top: 10px; display: flex; gap: 15px; justify-content: center; flex-wrap: wrap; }
+        .nav-btn {
+            padding: 12px 30px; border-radius: 25px; border: none;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white; font-size: 16px; font-weight: 500; cursor: pointer;
+            transition: all 0.3s ease; box-shadow: 0 8px 25px rgba(79,172,254,0.3);
+            display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
+        }
+        .nav-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 35px rgba(79,172,254,0.4); }
+        .nav-btn.secondary { background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%); box-shadow: 0 8px 25px rgba(124,58,237,0.3); }
+        @media (max-width: 768px) {
+            .container { margin: 10px; border-radius: 15px; }
+            .header, .content { padding: 20px; }
+            .stats-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>
+                <i class="fas fa-phone-volume"></i>
+                安居家电 · 售后回访
+            </h2>
+            <p>按客户手机号查询维修档案，生成保养 / 保修到期 / 维修满意度回访话术</p>
+        </div>
+
+        <div class="content">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <i class="fas fa-box-open"></i>
+                    <div class="number" id="statOrders">-</div>
+                    <div class="label">登记客户订单</div>
+                </div>
+                <div class="stat-card">
+                    <i class="fas fa-clipboard-list"></i>
+                    <div class="number" id="statTickets">-</div>
+                    <div class="label">报修工单</div>
+                </div>
+                <div class="stat-card">
+                    <i class="fas fa-users"></i>
+                    <div class="number" id="statEngineers">-</div>
+                    <div class="label">在册工程师</div>
+                </div>
+                <div class="stat-card">
+                    <i class="fas fa-headset"></i>
+                    <div class="number" id="statHandovers">-</div>
+                    <div class="label">转人工记录</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3><i class="fas fa-search"></i> 查询客户（手机号）</h3>
+                <div class="search-row">
+                    <input type="text" id="phone-input" placeholder="请输入11位手机号，如 13800138000" value="13800138000" maxlength="11">
+                    <button class="btn btn-primary" id="btn-analysis">
+                        <i class="fas fa-user-circle"></i> 查询维修档案
+                    </button>
+                    <button class="btn btn-success" id="btn-reminder">
+                        <i class="fas fa-comment-medical"></i> 生成回访消息
+                    </button>
+                </div>
+                <div class="hint">
+                    演示客户：王芳 13800138000（空调/冰箱在保、洗衣机超保，近期有报修记录）、李强 13900000000
+                </div>
+            </div>
+
+            <div class="card" id="profile-card">
+                <h3><i class="fas fa-id-card"></i> 客户维修档案</h3>
+                <div id="profile-area" class="empty-tip">
+                    <i class="fas fa-user-slash"></i>
+                    尚未查询，输入手机号后点击「查询维修档案」
+                </div>
+            </div>
+
+            <div class="card" id="reminder-card">
+                <h3><i class="fas fa-bell"></i> 回访消息预览</h3>
+                <div id="reminder-area" class="empty-tip">
+                    <i class="fas fa-envelope-open-text"></i>
+                    点击「生成回访消息」查看话术与工程师可约时段
+                </div>
+            </div>
+
+            <div class="actions">
+                <a href="/tickets" class="nav-btn secondary">
+                    <i class="fas fa-clipboard-list"></i>
+                    报修工单管理
+                </a>
+                <a href="/" class="nav-btn">
+                    <i class="fas fa-home"></i>
+                    返回客服主界面
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchJson(url, options) {
+            const res = await fetch(url, options);
+            if (!res.ok) {
+                let detail = '';
+                try { detail = (await res.json()).detail || ''; } catch (e) {}
+                throw new Error(detail || '请求失败（HTTP ' + res.status + '）');
+            }
+            return res.json();
+        }
+
+        const STATUS_LABELS = {
+            pending: '待派单', assigned: '已派单', in_progress: '维修中', completed: '已完成', cancelled: '已取消'
+        };
+
+        function setStatusText(id, value, suffix) {
+            document.getElementById(id).textContent = value + (suffix || '');
+        }
+
+        function getPhone() {
+            const phone = document.getElementById('phone-input').value.trim();
+            if (!/^1\d{10}$/.test(phone)) {
+                alert('请输入正确的11位手机号');
+                return null;
+            }
+            return phone;
+        }
+
+        async function loadStats() {
+            try {
+                const stats = await fetchJson('/api/follow_ups/stats');
+                document.getElementById('statOrders').textContent = stats.total_orders ?? 0;
+                document.getElementById('statTickets').textContent = stats.total_tickets ?? 0;
+                document.getElementById('statEngineers').textContent = stats.total_engineers ?? 0;
+                document.getElementById('statHandovers').textContent = stats.total_handovers ?? 0;
+                const byStatus = stats.tickets_by_status || {};
+                const parts = Object.keys(byStatus).map(k =>
+                    STATUS_LABELS[k] || k + '：' + byStatus[k]
+                );
+                if (parts.length > 0) {
+                    document.getElementById('statTickets').title = parts.join('，');
+                }
+            } catch (error) {
+                console.error('加载运营统计失败:', error);
+            }
+        }
+
+        async function loadAnalysis() {
+            const phone = getPhone();
+            if (!phone) return;
+            const area = document.getElementById('profile-area');
+            area.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 查询中...';
+
+            try {
+                const data = await fetchJson('/api/follow_ups/analysis', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({phone: phone})
+                });
+
+                if (!data.user_found) {
+                    area.innerHTML = `<div class="empty-tip">
+                        <i class="fas fa-user-slash"></i>
+                        未查询到 ${phone} 的报修记录，该客户暂无维修档案（可直接尝试生成回访消息）
+                    </div>`;
+                    return;
+                }
+
+                const reminderFlag = data.should_send_reminder
+                    ? '<span class="tag warn"><i class="fas fa-exclamation-circle"></i> 建议回访（距上次维修≥30天）</span>'
+                    : '<span class="tag"><i class="fas fa-check-circle"></i> 近期有服务记录</span>';
+
+                area.innerHTML = `
+                    <div class="profile-grid">
+                        <div class="profile-item">
+                            <div class="k">客户姓名 / 手机</div>
+                            <div class="v">${data.user_name || '未登记'} · ${data.phone}</div>
+                        </div>
+                        <div class="profile-item">
+                            <div class="k">常用产品品类</div>
+                            <div class="v">${data.favorite_product_type || '-'} ${reminderFlag}</div>
+                        </div>
+                        <div class="profile-item">
+                            <div class="k">常见故障</div>
+                            <div class="v">${data.favorite_fault_desc || '-'}</div>
+                        </div>
+                        <div class="profile-item">
+                            <div class="k">常用上门时段 / 工程师</div>
+                            <div class="v">${data.favorite_time_slot || '-'} ·
+                                ${data.favorite_engineer_name ? data.favorite_engineer_name + '（ID:' + data.favorite_engineer_id + '）' : '-'}</div>
+                        </div>
+                        <div class="profile-item">
+                            <div class="k">累计报修次数</div>
+                            <div class="v">${data.total_repairs} 次</div>
+                        </div>
+                        <div class="profile-item">
+                            <div class="k">最近一次报修</div>
+                            <div class="v">${data.last_repair_date || '-'}
+                                ${data.days_since_last_repair != null ? `（${data.days_since_last_repair}天前）` : ''}</div>
+                        </div>
+                    </div>`;
+            } catch (error) {
+                area.innerHTML = `<div class="empty-tip" style="color:#e53e3e;">
+                    <i class="fas fa-exclamation-triangle"></i> 查询失败：${error.message}
+                </div>`;
+            }
+        }
+
+        async function loadReminder() {
+            const phone = getPhone();
+            if (!phone) return;
+            const area = document.getElementById('reminder-area');
+            area.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在生成回访话术...';
+
+            try {
+                const data = await fetchJson('/api/follow_ups/reminder', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({phone: phone})
+                });
+
+                let slotsHtml = '';
+                if (data.engineer_available_times && data.engineer_available_times.length > 0) {
+                    const chips = data.engineer_available_times.map(s =>
+                        `<span class="slot-chip">${s.formatted || s.time}</span>`
+                    ).join('');
+                    slotsHtml = `
+                        <div style="margin-top:15px; font-size:13px; color:#888;">
+                            <i class="fas fa-calendar-check"></i> 常用工程师可约上门时段（9:00-18:00）：
+                        </div>
+                        <div class="slot-list">${chips}</div>`;
+                }
+
+                area.innerHTML = `
+                    <div class="reminder-message">${data.message}</div>
+                    ${slotsHtml}`;
+            } catch (error) {
+                area.innerHTML = `<div class="empty-tip" style="color:#e53e3e;">
+                    <i class="fas fa-exclamation-triangle"></i> 生成失败：${error.message}
+                </div>`;
+            }
+        }
+
+        document.getElementById('btn-analysis').onclick = loadAnalysis;
+        document.getElementById('btn-reminder').onclick = loadReminder;
+        loadStats();
+    </script>
+</body>
+</html>

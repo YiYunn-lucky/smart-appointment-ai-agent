@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安居家电 · 报修工单管理</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1280px; margin: 0 auto; background: rgba(255,255,255,0.95);
+            backdrop-filter: blur(20px); border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden; border: 1px solid rgba(255,255,255,0.2);
+        }
+        .header {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            padding: 30px; color: white; text-align: center; position: relative; overflow: hidden;
+        }
+        .header h2 {
+            font-size: 28px; font-weight: 600; margin-bottom: 10px;
+            display: flex; align-items: center; justify-content: center; gap: 15px;
+        }
+        .header p { font-size: 16px; opacity: 0.9; }
+        .content { padding: 30px; }
+        .stats-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 15px; margin-bottom: 25px;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white; padding: 15px; border-radius: 15px; text-align: center;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1); cursor: pointer;
+            transition: all 0.3s ease; border: 2px solid transparent;
+        }
+        .stat-card:nth-child(2) { background: linear-gradient(135deg, #f6d365 0%, #fda085 100%); }
+        .stat-card:nth-child(3) { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .stat-card:nth-child(4) { background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%); }
+        .stat-card:hover { transform: translateY(-3px); }
+        .stat-card.active { border-color: #764ba2; }
+        .stat-card .number { font-size: 22px; font-weight: bold; }
+        .stat-card .label { font-size: 13px; opacity: 0.95; margin-top: 4px; }
+        .toolbar {
+            display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 20px;
+        }
+        .toolbar select, .toolbar input {
+            padding: 10px 14px; border: 2px solid rgba(0,0,0,0.1); border-radius: 12px;
+            font-size: 14px; outline: none; transition: all 0.3s ease;
+        }
+        .toolbar select:focus, .toolbar input:focus { border-color: #4facfe; }
+        .btn {
+            padding: 10px 18px; border-radius: 10px; border: none; color: white;
+            font-size: 14px; font-weight: 500; cursor: pointer;
+            display: inline-flex; align-items: center; gap: 7px;
+            transition: all 0.3s ease; box-shadow: 0 5px 15px rgba(0,0,0,0.12);
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+        .btn-blue { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); }
+        .btn-purple { background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%); }
+        .btn-green { background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%); }
+        .btn-orange { background: linear-gradient(135deg, #f39c12 0%, #e67e22 100%); }
+        .btn-gray { background: linear-gradient(135deg, #8e8e93 0%, #636366 100%); }
+        .btn-red { background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); }
+        .btn-sm { padding: 6px 12px; font-size: 12.5px; border-radius: 8px; }
+        .table-container {
+            background: white; border-radius: 15px; overflow: hidden;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin-bottom: 25px;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; padding: 15px 12px; text-align: center;
+            font-weight: 600; font-size: 13.5px; white-space: nowrap;
+        }
+        td {
+            padding: 14px 12px; text-align: center; border-bottom: 1px solid rgba(0,0,0,0.05);
+            font-size: 13.5px; vertical-align: middle;
+        }
+        tbody tr { transition: all 0.3s ease; }
+        tbody tr:hover { background: rgba(79,172,254,0.04); }
+        .status-badge { padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; display: inline-block; white-space: nowrap; }
+        .st-pending { background: rgba(243,156,18,0.15); color: #d68910; }
+        .st-assigned { background: rgba(79,172,254,0.15); color: #2b6cb0; }
+        .st-in_progress { background: rgba(167,139,250,0.2); color: #6d28d9; }
+        .st-completed { background: rgba(39,174,96,0.15); color: #1e8449; }
+        .st-cancelled { background: rgba(0,0,0,0.07); color: #666; }
+        .cell-left { text-align: left; }
+        .fault-desc { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .ops { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+        .panel {
+            background: white; border-radius: 15px; padding: 20px 25px;
+            box-shadow: 0 8px 25px rgba(0,0,0,0.1); margin-bottom: 25px;
+        }
+        .panel summary {
+            cursor: pointer; font-weight: 600; color: #4facfe; font-size: 15px;
+            list-style: none; display: flex; align-items: center; gap: 8px;
+        }
+        .panel summary::-webkit-details-marker { display: none; }
+        .form-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px; margin: 18px 0;
+        }
+        .form-grid input, .form-grid select, .form-grid textarea {
+            width: 100%; padding: 10px 14px; border: 2px solid rgba(0,0,0,0.1);
+            border-radius: 10px; font-size: 14px; outline: none; font-family: inherit;
+        }
+        .form-grid textarea { grid-column: 1 / -1; resize: vertical; min-height: 60px; }
+        .form-grid input:focus, .form-grid select:focus, .form-grid textarea:focus { border-color: #4facfe; }
+        .handover-table td { text-align: left; }
+        .empty-row td { padding: 35px 15px; color: #999; }
+        .toast {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-80px);
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white; padding: 13px 26px; border-radius: 12px; font-size: 14.5px;
+            font-weight: 500; box-shadow: 0 10px 30px rgba(0,0,0,0.25); z-index: 99;
+            transition: all 0.4s ease; opacity: 0; max-width: 90vw;
+        }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .toast.error { background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%); }
+        .actions { text-align: center; margin-top: 10px; display: flex; gap: 15px; justify-content: center; flex-wrap: wrap; }
+        .nav-btn {
+            padding: 12px 30px; border-radius: 25px; border: none;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white; font-size: 16px; font-weight: 500; cursor: pointer;
+            transition: all 0.3s ease; box-shadow: 0 8px 25px rgba(79,172,254,0.3);
+            display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
+        }
+        .nav-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 35px rgba(79,172,254,0.4); }
+        .nav-btn.secondary { background: linear-gradient(135deg, #a78bfa 0%, #7c3aed 100%); box-shadow: 0 8px 25px rgba(124,58,237,0.3); }
+        .modal-mask {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 50;
+            display: none; align-items: center; justify-content: center;
+        }
+        .modal-mask.show { display: flex; }
+        .modal {
+            background: white; border-radius: 18px; padding: 26px; width: 90%;
+            max-width: 460px; box-shadow: 0 25px 60px rgba(0,0,0,0.3);
+        }
+        .modal h4 { color: #4facfe; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+        .modal .sub { color: #888; font-size: 13px; margin-bottom: 16px; }
+        .engineer-list { max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 18px; }
+        .engineer-opt {
+            border: 2px solid rgba(0,0,0,0.08); border-radius: 12px; padding: 12px 14px;
+            cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 12px;
+        }
+        .engineer-opt:hover { border-color: #4facfe; background: rgba(79,172,254,0.05); }
+        .engineer-opt.selected { border-color: #4facfe; background: rgba(79,172,254,0.1); }
+        .engineer-opt .name { font-weight: 600; color: #333; }
+        .engineer-opt .meta { font-size: 12px; color: #888; }
+        .modal-btns { display: flex; justify-content: flex-end; gap: 10px; }
+        @media (max-width: 768px) {
+            .container { margin: 10px; border-radius: 15px; }
+            .header, .content { padding: 20px; }
+            .stats-grid { grid-template-columns: 1fr 1fr; }
+            .fault-desc, .addr { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h2>
+                <i class="fas fa-clipboard-list"></i>
+                安居家电 · 报修工单管理
+            </h2>
+            <p>工单列表 · 派单 · 状态流转 · 转人工记录（服务窗口 9:00 - 18:00）</p>
+        </div>
+
+        <div class="content">
+            <div class="stats-grid" id="stats-grid">
+                <div class="stat-card" data-filter="" title="全部工单">
+                    <div class="number" id="c-all">-</div>
+                    <div class="label"><i class="fas fa-list"></i> 全部工单</div>
+                </div>
+                <div class="stat-card" data-filter="pending" title="待派单">
+                    <div class="number" id="c-pending">-</div>
+                    <div class="label"><i class="fas fa-hourglass-half"></i> 待派单</div>
+                </div>
+                <div class="stat-card" data-filter="assigned" title="已派单+维修中">
+                    <div class="number" id="c-active">-</div>
+                    <div class="label"><i class="fas fa-wrench"></i> 进行中</div>
+                </div>
+                <div class="stat-card" data-filter="completed" title="已完成">
+                    <div class="number" id="c-completed">-</div>
+                    <div class="label"><i class="fas fa-check-circle"></i> 已完成</div>
+                </div>
+            </div>
+
+            <div class="toolbar">
+                <select id="status-filter">
+                    <option value="">全部状态</option>
+                    <option value="pending">待派单</option>
+                    <option value="assigned">已派单</option>
+                    <option value="in_progress">维修中</option>
+                    <option value="completed">已完成</option>
+                    <option value="cancelled">已取消</option>
+                </select>
+                <input type="text" id="phone-filter" placeholder="按手机号筛选…" style="width:180px;">
+                <button class="btn btn-blue" id="btn-search"><i class="fas fa-search"></i> 查询</button>
+                <button class="btn btn-gray" id="btn-refresh"><i class="fas fa-sync-alt"></i> 刷新</button>
+                <div style="flex:1"></div>
+                <button class="btn btn-purple" id="btn-new-ticket"><i class="fas fa-plus"></i> 新建工单</button>
+            </div>
+
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th><i class="fas fa-hashtag"></i> 单号</th>
+                            <th>客户</th>
+                            <th>品类</th>
+                            <th>故障描述</th>
+                            <th>上门地址</th>
+                            <th>上门时间</th>
+                            <th>工程师</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ticket-rows">
+                        <tr class="empty-row"><td colspan="9">加载中...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <details class="panel" id="new-ticket-panel" style="display:none;">
+                <summary><i class="fas fa-plus-circle"></i> 手工登记报修工单</summary>
+                <div class="form-grid">
+                    <input type="text" id="f-name" placeholder="客户姓名（可空）">
+                    <input type="text" id="f-phone" placeholder="手机号 *" value="13800138000">
+                    <select id="f-product">
+                        <option value="">品类 *</option>
+                        <option>空调</option><option>冰箱</option><option>洗衣机</option>
+                        <option>热水器</option><option>净水器</option><option>烟灶</option>
+                    </select>
+                    <input type="datetime-local" id="f-time" placeholder="上门时间 *">
+                    <textarea id="f-fault" placeholder="故障描述 *，如：不制冷、有异响"></textarea>
+                    <textarea id="f-address" placeholder="上门地址 *，如：海淀区中关村某小区2号楼301"></textarea>
+                </div>
+                <button class="btn btn-green" id="btn-create"><i class="fas fa-save"></i> 创建工单（待派单）</button>
+                <button class="btn btn-gray" id="btn-cancel-create" style="margin-left:10px;"><i class="fas fa-times"></i> 收起</button>
+            </details>
+
+            <details class="panel">
+                <summary><i class="fas fa-headset"></i> 转人工记录（投诉 / 人工服务诉求）</summary>
+                <div class="table-container" style="margin-top:14px; margin-bottom:0;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width:80px;">ID</th>
+                                <th>客户</th>
+                                <th style="width:120px;">手机号</th>
+                                <th style="width:140px;">关联工单</th>
+                                <th>诉求摘要</th>
+                                <th style="width:150px;">登记时间</th>
+                            </tr>
+                        </thead>
+                        <tbody id="handover-rows">
+                            <tr class="empty-row"><td colspan="6">加载中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+
+            <div class="actions">
+                <a href="/follow_ups" class="nav-btn secondary">
+                    <i class="fas fa-phone-volume"></i>
+                    售后回访
+                </a>
+                <a href="/" class="nav-btn">
+                    <i class="fas fa-home"></i>
+                    返回客服主界面
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 派单弹窗 -->
+    <div class="modal-mask" id="assign-mask">
+        <div class="modal">
+            <h4><i class="fas fa-user-cog"></i> 派单：<span id="assign-ticket-no"></span></h4>
+            <div class="sub">上门时间：<span id="assign-time"></span> · 请选择工程师（将校验档期冲突）</div>
+            <div class="engineer-list" id="assign-engineers">
+                <div style="color:#999; text-align:center; padding:20px;">加载工程师中...</div>
+            </div>
+            <div class="modal-btns">
+                <button class="btn btn-gray" id="assign-cancel"><i class="fas fa-times"></i> 取消</button>
+                <button class="btn btn-green" id="assign-confirm"><i class="fas fa-check"></i> 确认派单</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script>
+        const STATUS_LABELS = {
+            pending: '待派单', assigned: '已派单',
+            in_progress: '维修中', completed: '已完成', cancelled: '已取消'
+        };
+        const STATUS_CLASS = {
+            pending: 'st-pending', assigned: 'st-assigned',
+            in_progress: 'st-in_progress', completed: 'st-completed', cancelled: 'st-cancelled'
+        };
+        const PRODUCT_ICONS = {
+            '空调': 'fa-snowflake', '冰箱': 'fa-thermometer-half', '洗衣机': 'fa-water',
+            '热水器': 'fa-shower', '净水器': 'fa-tint', '烟灶': 'fa-fire'
+        };
+        let allTickets = [];
+        let engineers = [];
+        let assignTicketId = null;
+        let assignSelectedEngineer = null;
+
+        const $ = id => document.getElementById(id);
+
+        function toast(message, isError) {
+            const el = $('toast');
+            el.textContent = (isError ? '⚠️ ' : '✅ ') + message;
+            el.className = 'toast show' + (isError ? ' error' : '');
+            clearTimeout(el._timer);
+            el._timer = setTimeout(() => { el.className = 'toast'; }, 3200);
+        }
+
+        async function fetchJson(url, options) {
+            const res = await fetch(url, options);
+            if (!res.ok) {
+                let detail = '';
+                try { detail = (await res.json()).detail || ''; } catch (e) {}
+                throw new Error(detail || 'HTTP ' + res.status);
+            }
+            return res.json();
+        }
+
+        async function loadEngineers() {
+            try {
+                engineers = await fetchJson('/api/engineers');
+            } catch (e) {
+                engineers = [];
+                console.error('加载工程师失败:', e);
+            }
+        }
+
+        function statusHtml(status) {
+            return `<span class="status-badge ${STATUS_CLASS[status] || ''}">${STATUS_LABELS[status] || status}</span>`;
+        }
+
+        function opsHtml(t) {
+            const btns = [];
+            if (t.status === 'pending') {
+                btns.push(`<button class="btn btn-blue btn-sm" data-act="assign" data-id="${t.id}" title="派工程师上门"><i class="fas fa-user-plus"></i> 派单</button>`);
+            }
+            if (t.status === 'assigned') {
+                btns.push(`<button class="btn btn-purple btn-sm" data-act="status" data-to="in_progress" data-id="${t.id}"><i class="fas fa-play"></i> 开始维修</button>`);
+            }
+            if (t.status === 'in_progress') {
+                btns.push(`<button class="btn btn-green btn-sm" data-act="status" data-to="completed" data-id="${t.id}"><i class="fas fa-check"></i> 完成</button>`);
+            }
+            if (['pending', 'assigned', 'in_progress'].includes(t.status)) {
+                btns.push(`<button class="btn btn-red btn-sm" data-act="status" data-to="cancelled" data-id="${t.id}"><i class="fas fa-times"></i> 取消</button>`);
+            }
+            if (t.status === 'assigned' && t.engineer_id) {
+                btns.push(`<button class="btn btn-orange btn-sm" data-act="assign" data-id="${t.id}" title="更换工程师"><i class="fas fa-exchange-alt"></i> 换人</button>`);
+            }
+            return `<div class="ops">${btns.join('')}</div>`;
+        }
+
+        function renderTickets() {
+            const filterStatus = $('status-filter').value;
+            const filterPhone = $('phone-filter').value.trim();
+            let list = allTickets;
+            if (filterStatus) list = list.filter(t => t.status === filterStatus);
+            if (filterPhone) list = list.filter(t => (t.user_phone || '').includes(filterPhone));
+
+            const rows = document.getElementById('ticket-rows');
+            if (list.length === 0) {
+                rows.innerHTML = '<tr class="empty-row"><td colspan="9"><i class="fas fa-inbox"></i> 暂无符合条件的工单</td></tr>';
+                return;
+            }
+            rows.innerHTML = list.map(t => {
+                const icon = PRODUCT_ICONS[t.product_type] || 'fa-plug';
+                return `<tr>
+                    <td><strong>${t.ticket_no}</strong><br><span style="color:#999;font-size:12px;">#${t.id}</span></td>
+                    <td>${t.user_name || '匿名客户'}<br><span style="color:#888;font-size:12px;">${t.user_phone}</span></td>
+                    <td><i class="fas ${icon}" style="color:#4facfe;margin-right:4px;"></i>${t.product_type}</td>
+                    <td class="cell-left fault-desc" title="${(t.fault_desc || '').replace(/"/g, '&quot;')}">${t.fault_desc || '-'}</td>
+                    <td class="cell-left addr" title="${(t.address || '').replace(/"/g, '&quot;')}"><span style="font-size:13px;">${t.address || '-'}</span></td>
+                    <td>${t.start_time}<br><span style="color:#999;font-size:12px;">至 ${t.end_time}</span></td>
+                    <td>${t.engineer_name ? `<i class="fas fa-user-cog" style="color:#7c3aed;"></i> ${t.engineer_name}` : '<span style="color:#999;">未派单</span>'}</td>
+                    <td>${statusHtml(t.status)}</td>
+                    <td>${opsHtml(t)}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        function renderStats() {
+            const by = {};
+            allTickets.forEach(t => { by[t.status] = (by[t.status] || 0) + 1; });
+            $('c-all').textContent = allTickets.length;
+            $('c-pending').textContent = by.pending || 0;
+            $('c-active').textContent = (by.assigned || 0) + (by.in_progress || 0);
+            $('c-completed').textContent = by.completed || 0;
+            document.querySelectorAll('#stats-grid .stat-card').forEach(el => {
+                const v = el.dataset.filter;
+                const active = v === '' ? !$('status-filter').value && !$('phone-filter').value.trim()
+                    : (v === 'active' ? ($('status-filter').value === 'assigned' || $('status-filter').value === 'in_progress')
+                                      : $('status-filter').value === v);
+                el.classList.toggle('active', active);
+            });
+        }
+
+        async function loadTickets() {
+            try {
+                allTickets = await fetchJson('/api/tickets');
+                renderStats();
+                renderTickets();
+            } catch (e) {
+                $('ticket-rows').innerHTML = `<tr class="empty-row"><td colspan="9"><i class="fas fa-exclamation-triangle"></i> 加载失败：${e.message}</td></tr>`;
+            }
+        }
+
+        async function loadHandovers() {
+            try {
+                const list = await fetchJson('/api/tickets/handovers');
+                const rows = document.getElementById('handover-rows');
+                if (!list || list.length === 0) {
+                    rows.innerHTML = '<tr class="empty-row"><td colspan="6"><i class="fas fa-inbox"></i> 暂无转人工记录</td></tr>';
+                    return;
+                }
+                rows.innerHTML = list.map(h => `<tr>
+                    <td>#${h.id}</td>
+                    <td>${h.user_name || '-'}</td>
+                    <td>${h.user_phone || '-'}</td>
+                    <td>${h.ticket_no ? h.ticket_no : (h.ticket_id ? '工单#' + h.ticket_id : '-')}</td>
+                    <td style="color:#555;">${h.issue_summary}</td>
+                    <td>${h.created_at}</td>
+                </tr>`).join('');
+            } catch (e) {
+                document.getElementById('handover-rows').innerHTML =
+                    `<tr class="empty-row"><td colspan="6">加载失败：${e.message}</td></tr>`;
+            }
+        }
+
+        async function refreshAll() {
+            await Promise.all([loadTickets(), loadEngineers(), loadHandovers()]);
+        }
+
+        async function doAction(btn) {
+            const ticketId = btn.dataset.id;
+            const act = btn.dataset.act;
+            if (act === 'assign') {
+                openAssignModal(ticketId);
+                return;
+            }
+            if (act === 'status') {
+                const to = btn.dataset.to;
+                if (to === 'cancelled' && !confirm('确定取消该报修工单吗？取消后将释放工程师档期。')) return;
+                btn.disabled = true;
+                try {
+                    const r = await fetchJson(`/api/tickets/${ticketId}/status`, {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({status: to})
+                    });
+                    toast(r.message);
+                    await refreshAll();
+                } catch (e) {
+                    toast(e.message, true);
+                } finally {
+                    btn.disabled = false;
+                }
+            }
+        }
+
+        // ---------- 派单弹窗 ----------
+        async function openAssignModal(ticketId) {
+            const ticket = allTickets.find(t => t.id === ticketId);
+            if (!ticket) return;
+            assignTicketId = ticketId;
+            assignSelectedEngineer = ticket.engineer_id || null;
+            $('assign-ticket-no').textContent = ticket.ticket_no;
+            $('assign-time').textContent = `${ticket.start_time} ~ ${ticket.end_time}`;
+            const listEl = $('assign-engineers');
+            listEl.innerHTML = '<div style="color:#999;text-align:center;padding:20px;">加载工程师中...</div>';
+            $('assign-mask').classList.add('show');
+            if (engineers.length === 0) await loadEngineers();
+            renderEngineerOptions(ticket);
+        }
+
+        function renderEngineerOptions(ticket) {
+            const listEl = $('assign-engineers');
+            const busyIds = new Set();
+            (allTickets || []).forEach(t => {
+                if (t.engineer_id && ['pending', 'assigned', 'in_progress'].includes(t.status)) busyIds.add(t.engineer_id);
+            });
+            if (engineers.length === 0) {
+                listEl.innerHTML = '<div style="color:#999;text-align:center;padding:20px;">暂无工程师数据，请先确认工程师已初始化</div>';
+                return;
+            }
+            listEl.innerHTML = engineers.map(eng => {
+                const skill = eng.skills ? eng.skills.split(/[、，,;；\/\s]+/).filter(Boolean).slice(0, 3).join('·') : '';
+                const busy = busyIds.has(eng.id) ? ' <span style="color:#e74c3c;font-size:12px;">（今日已有上门任务）</span>' : '';
+                const sel = assignSelectedEngineer === eng.id ? ' selected' : '';
+                return `<div class="engineer-opt${sel}" data-eid="${eng.id}">
+                    <i class="fas fa-user-cog" style="color:#7c3aed;font-size:18px;"></i>
+                    <div style="flex:1;">
+                        <div class="name">${eng.name} <span style="color:#999;font-size:12px;">ID ${eng.id}</span>${busy}</div>
+                        <div class="meta">${skill ? '擅长：' + skill + ' · ' : ''}区域：${eng.service_region || '全市'}</div>
+                    </div>
+                    ${sel ? '<i class="fas fa-check-circle check-mark" style="color:#4facfe;"></i>' : ''}
+                </div>`;
+            }).join('');
+            listEl.querySelectorAll('.engineer-opt').forEach(el => {
+                el.onclick = () => {
+                    assignSelectedEngineer = parseInt(el.dataset.eid);
+                    listEl.querySelectorAll('.engineer-opt').forEach(o => {
+                        o.classList.remove('selected');
+                        const mark = o.querySelector('.check-mark');
+                        if (mark) mark.remove();
+                    });
+                    el.classList.add('selected');
+                    const mark = document.createElement('i');
+                    mark.className = 'fas fa-check-circle check-mark';
+                    mark.style.color = '#4facfe';
+                    el.appendChild(mark);
+                };
+            });
+        }
+
+        $('assign-cancel').onclick = () => $('assign-mask').classList.remove('show');
+        $('assign-mask').addEventListener('click', e => {
+            if (e.target === $('assign-mask')) $('assign-mask').classList.remove('show');
+        });
+
+        $('assign-confirm').onclick = async function() {
+            if (!assignSelectedEngineer) {
+                toast('请先选择工程师', true);
+                return;
+            }
+            this.disabled = true;
+            try {
+                const r = await fetchJson(`/api/tickets/${assignTicketId}/assign`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({engineer_id: assignSelectedEngineer})
+                });
+                toast(r.message);
+                $('assign-mask').classList.remove('show');
+                await refreshAll();
+            } catch (e) {
+                toast(e.message, true);
+            } finally {
+                this.disabled = false;
+            }
+        };
+
+        // ---------- 新建工单 ----------
+        $('btn-new-ticket').onclick = () => {
+            $('new-ticket-panel').style.display = 'block';
+            $('new-ticket-panel').open = true;
+        };
+        $('btn-cancel-create').onclick = () => {
+            $('new-ticket-panel').open = false;
+            $('new-ticket-panel').style.display = 'none';
+        };
+
+        $('btn-create').onclick = async function() {
+            const phone = $('f-phone').value.trim();
+            const product = $('f-product').value;
+            const fault = $('f-fault').value.trim();
+            const address = $('f-address').value.trim();
+            const timeStr = $('f-time').value;
+            if (!/^1\d{10}$/.test(phone)) { toast('请输入正确的11位手机号', true); return; }
+            if (!product) { toast('请选择产品品类', true); return; }
+            if (!fault || !address) { toast('请填写故障描述和上门地址', true); return; }
+            if (!timeStr) { toast('请选择期望上门时间', true); return; }
+            // datetime-local -> "YYYY-MM-DD HH:MM"
+            const startTime = timeStr.replace('T', ' ') + ':00';
+            this.disabled = true;
+            try {
+                const ticket = await fetchJson('/api/tickets', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        user_phone: phone,
+                        user_name: $('f-name').value.trim() || null,
+                        product_type: product,
+                        fault_desc: fault,
+                        address: address,
+                        start_time: startTime,
+                        engineer_id: null
+                    })
+                });
+                toast(`工单 ${ticket.ticket_no} 创建成功，请进行派单`);
+                ['f-name','f-fault','f-address','f-time'].forEach(id => $(id).value = '');
+                $('f-product').value = '';
+                $('new-ticket-panel').open = false;
+                $('new-ticket-panel').style.display = 'none';
+                $('status-filter').value = '';
+                $('phone-filter').value = '';
+                await refreshAll();
+            } catch (e) {
+                toast(e.message, true);
+            } finally {
+                this.disabled = false;
+            }
+        };
+
+        // ---------- 事件绑定 ----------
+        document.getElementById('ticket-rows').addEventListener('click', e => {
+            const btn = e.target.closest('button[data-act]');
+            if (btn) doAction(btn);
+        });
+        $('btn-search').onclick = () => { renderTickets(); renderStats(); };
+        $('status-filter').onchange = () => { renderTickets(); renderStats(); };
+        $('phone-filter').addEventListener('keypress', e => {
+            if (e.key === 'Enter') { renderTickets(); renderStats(); }
+        });
+        $('btn-refresh').onclick = () => { refreshAll(); toast('已刷新'); };
+        document.querySelectorAll('#stats-grid .stat-card').forEach(el => {
+            el.onclick = () => {
+                const v = el.dataset.filter;
+                $('status-filter').value = (v === 'active') ? '' : v;
+                if (v === 'active') $('phone-filter').value = '';
+                renderTickets(); renderStats();
+            };
+        });
+
+        refreshAll();
+    </script>
+</body>
+</html>
