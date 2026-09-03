@@ -132,10 +132,10 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 │   ├── consultant_agent.py            # 售后顾问 Agent
 │   ├── consultant/                    #   knowledge_retriever / consultation_classifier / response_generator / prompt_builder
 │   └── user_behavior_agent.py + user_behavior/   # 用户行为与回访
-├── services/              # Services 层：engineer / ticket / order / handover / knowledge / text_embedding / recommendation / user_behavior
+├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior
 ├── db/                    # DB 层：models.py / db_router.py / repositories / base（session_manager、interfaces）
 ├── config/                # 模型提供方、常量、时区与营业时间
-├── tests/                 # 59 项离线测试
+├── tests/                 # 68 项离线测试
 └── data/                  # SQLite 库与向量索引（运行时生成，已 gitignore）
 ```
 
@@ -189,6 +189,49 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8001
 
 **体验路径建议**：报修「空调不制冷，地址…，手机 13800138000，今天下午 3 点上门」→ 拿工单号去问进度 → 去 `/tickets` 完成状态流转 → `/follow_ups` 生成回访。
 
+## 接入外部 RAG MCP 知识库（可选）
+
+知识库检索可委托给外部 **MODULAR-RAG-MCP-SERVER**（MCP stdio 协议，chroma 向量 + BM25 + rerank 混合检索）：开关开启后 `KnowledgeService.search` 优先调用外部 RAG（工具 `query_knowledge_hub`），无结果或调用异常时自动回退本地 FAISS 检索；开关关闭时行为与本地版完全一致。RAG 服务端由本进程作为子进程拉起，不随本仓库分发。
+
+```dotenv
+# .env
+RAG_MCP_ENABLED=true
+RAG_MCP_CWD=C:/Users/Cloud/Desktop/RAG项目/MODULAR-RAG-MCP-SERVER-main   # RAG 服务端项目根目录
+# RAG_MCP_COMMAND=python                              # 默认 sys.executable
+# RAG_MCP_ARGS=["-m", "src.mcp_server.server"]        # 默认同左
+# RAG_MCP_COLLECTION=knowledge_hub                    # 集合名，留空用服务端默认
+```
+
+联调三步：
+
+1. 确认 RAG 服务端可被拉起（其环境需装好 chromadb 等依赖，embedding 可走本地 ollama）：
+
+   ```bash
+   cd <RAG项目根目录> && python scripts/test_mcp_client.py
+   ```
+
+2. 开启 `RAG_MCP_ENABLED=true` 后启动本项目：
+
+   ```bash
+   python -m uvicorn app:app --host 127.0.0.1 --port 8001
+   ```
+
+3. 冒烟：知识库搜索接口返回应来自外部 RAG（首次调用需拉起子进程，等待数秒）：
+
+   ```bash
+   curl -X POST http://127.0.0.1:8001/api/knowledge/search \
+        -H "Content-Type: application/json" \
+        -d '{"query": "空调不制冷", "top_k": 3}'
+   ```
+
+   集合名可用下面的脚本调 `list_collections` 确认（在本项目根目录运行）：
+
+   ```bash
+   python -c "import asyncio; from services.mcp_rag_client import RagMcpClient; print(asyncio.run(RagMcpClient().list_collections()))"
+   ```
+
+   若 RAG 服务停用，检索请求自动回退本地结果。
+
 ## 流式令牌协议
 
 `/chat/stream` 以 SSE 流式返回，文本按行解析令牌渲染：
@@ -203,7 +246,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8001
 ## 测试
 
 ```bash
-pytest                    # 59 项全部离线运行，不依赖 LLM/Embedding Key
+pytest                    # 68 项全部离线运行，不依赖 LLM/Embedding Key
 pytest tests/test_offline_services.py -q   # 工单生命周期/保修边界/档期冲突等纯逻辑
 ```
 

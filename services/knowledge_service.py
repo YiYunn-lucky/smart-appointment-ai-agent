@@ -9,9 +9,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def _rag_mcp_enabled() -> bool:
+    """外部 RAG MCP 开关（延迟导入避免加重 knowledge_service 依赖）"""
+    try:
+        from services.mcp_rag_client import is_rag_mcp_enabled
+
+        return is_rag_mcp_enabled()
+    except Exception as e:
+        logger.debug(f"读取 RAG MCP 开关失败（按关闭处理）: {e}")
+        return False
+
+
 class KnowledgeService:
     """知识库服务类 - 结合数据库存储和向量检索"""
-    
+
     def __init__(self, db_path: str = 'sqlite:///data/smart_appointment.db'):
         # 使用统一的DatabaseRouter，符合架构设计
         self.db_router = DatabaseRouter(db_path)
@@ -180,7 +192,24 @@ class KnowledgeService:
             raise
 
     async def search(self, query: str, top_k: int = 3, category: str = None) -> List[Dict]:
-        """搜索相关文档"""
+        """搜索相关文档
+
+        外部 RAG MCP 开关开启且未限定分类时，优先委托外部 RAG 服务检索；
+        无结果或调用异常时回退本地 FAISS 索引检索。
+        """
+        if category is None and _rag_mcp_enabled():
+            try:
+                # 方法内导入：RAG 客户端依赖 mcp SDK，隔离失败不波及本地检索
+                from services.mcp_rag_client import get_rag_mcp_client
+
+                client = await get_rag_mcp_client()
+                docs = await client.search(query, top_k=top_k)
+                if docs:
+                    return docs
+                logger.info("外部 RAG 检索无结果，回退本地检索")
+            except Exception as e:
+                logger.warning(f"外部 RAG 检索异常，回退本地检索: {e}")
+
         if not self.initialized or self.index is None:
             logger.warning("知识库服务未初始化或索引不可用")
             return []
