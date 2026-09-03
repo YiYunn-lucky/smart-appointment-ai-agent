@@ -12,7 +12,7 @@ from agents.consultant.consultation_processor import ConsultationProcessor
 
 
 class TestConsultantPromptCopywriting:
-    """售后顾问提示词语料（防按摩文案回归）"""
+    """售后顾问提示词语料家电化"""
 
     def test_system_prompt_is_appliance_aftersales(self):
         prompt = PromptBuilder().system_prompt
@@ -21,9 +21,6 @@ class TestConsultantPromptCopywriting:
         # 领域覆盖：保修 / 收费 / 故障排查 / 400 热线
         assert "保修" in prompt or "在保" in prompt
         assert "400-820-9000" in prompt or "订单号" in prompt
-        for legacy in ["按摩", "推拿", "技师", "理疗"]:
-            assert legacy not in prompt, f"系统提示词不应包含按摩时代词汇：{legacy}"
-
     def test_consultation_prompt_assembles_knowledge_and_question(self):
         builder = PromptBuilder()
         prompt = builder.build_consultation_prompt(

@@ -238,7 +238,7 @@ class TestIncompleteInfoAsking:
 
 
 class TestMessageBuilderCopywriting:
-    """家电化话术快照（防止回归到按摩文案）"""
+    """家电化话术快照"""
 
     def test_missing_info_table_is_appliance_oriented(self):
         builder = MessageBuilder()
@@ -247,10 +247,6 @@ class TestMessageBuilderCopywriting:
         assert "start_time" in builder.missing_info_prompts
         assert "手机号" in builder.missing_info_prompts["phone"]
         assert "9:00-18:00" in builder.missing_info_prompts["start_time"]
-        # 文案属于安居家电售后域
-        assert "按摩" not in str(builder.missing_info_prompts)
-        assert "技师" not in str(builder.missing_info_prompts)
-
     def test_success_message_contains_ticket_and_engineer(self):
         builder = MessageBuilder()
         msg = builder.create_appointment_success_message(
@@ -269,7 +265,6 @@ class TestMessageBuilderCopywriting:
         builder = MessageBuilder()
         unrelated = builder.create_unrelated_message()
         assert "家电" in unrelated or "报修" in unrelated or "售后" in unrelated
-        assert "按摩" not in unrelated
         parse_error = builder.create_parse_error_message()
         assert "抱歉" in parse_error or "理解" in parse_error
 

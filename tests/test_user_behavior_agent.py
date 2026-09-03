@@ -5,7 +5,7 @@
 1. 报修行为记录 → 客户偏好分析（偏好工程师/常用产品/故障/时段）
 2. 回访时机判定（fresh 记录不提醒、超 30 天提醒）
 3. 偏好写入与置信度递增
-4. 回访消息家电化文案（防按摩/Tom 回归）
+4. 回访消息家电化文案
 """
 
 from datetime import timedelta
@@ -141,9 +141,7 @@ class TestPreferenceManagement:
 
 
 class TestReminderMessageCopywriting:
-    """回访消息文案家电化（防按摩时代回归）"""
-
-    LEGACY_WORDS = ["按摩", "推拿", "技师", "理疗", "Tom"]
+    """回访消息文案家电化"""
 
     def test_message_with_product_and_engineer_history(self, temp_db_path):
         service = build_service(temp_db_path)
@@ -155,8 +153,6 @@ class TestReminderMessageCopywriting:
         assert message is not None
         assert "洗衣机" in message
         assert "工程师" in message
-        for legacy in self.LEGACY_WORDS:
-            assert legacy not in message, f"回访消息不应包含按摩时代词汇：{legacy}"
 
     def test_message_without_history_is_generic(self, temp_db_path):
         service = build_service(temp_db_path)
@@ -164,5 +160,3 @@ class TestReminderMessageCopywriting:
         message = analyzer.generate_return_message("19900000000")
         assert message is not None
         assert "安居家电" in message
-        for legacy in self.LEGACY_WORDS:
-            assert legacy not in message

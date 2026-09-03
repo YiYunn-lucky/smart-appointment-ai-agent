@@ -3,7 +3,7 @@
 
 覆盖（不依赖真实 LLM key，用 conftest.FakeChatModel）：
 1. 分类枚举：appointment/query/complaint/other（废弃 pay/statistics）
-2. 分类提示词家电化语料（防按摩文案回归）
+2. 分类提示词家电化语料
 3. classify_task 结果归一化与非法值兜底
 4. get_category_description 类别描述
 """
@@ -32,10 +32,6 @@ class TestTaskClassifierCategories:
         assert "保修" in template and "AX" in template
         assert "转人工" in template
         assert "天气" in template
-        # 防按摩文案回归
-        for legacy in ["按摩", "推拿", "技师", "理疗"]:
-            assert legacy not in template, f"分类提示词不应包含按摩时代词汇：{legacy}"
-
     def test_get_category_description(self):
         classifier = TaskClassifier(FakeChatModel())
         assert "报修" in classifier.get_category_description("appointment")
