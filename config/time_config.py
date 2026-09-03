@@ -44,12 +44,10 @@ class TimeConfig:
     
     @classmethod
     def parse_datetime(cls, date_str: str, format_str: str = "%Y-%m-%d %H:%M") -> Optional[datetime]:
-        """解析日期时间字符串为北京时间的datetime对象"""
+        """解析日期时间字符串为北京时间 naive datetime（与 naive_now / 数据库存储一致）"""
         try:
             dt = datetime.strptime(date_str, format_str)
-            # 如果没有时区信息，假设是北京时间
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=cls.BEIJING_TZ)
+            # 输入字符串无时区信息，直接视为北京时间（保持 naive，便于与 naive_now 比较及落库）
             return dt
         except ValueError:
             return None

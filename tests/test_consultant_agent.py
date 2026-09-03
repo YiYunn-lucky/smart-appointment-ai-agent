@@ -1,119 +1,109 @@
 """
-ConsultantAgent 功能测试
+售后顾问（ConsultantAgent）离线功能测试
 
-测试咨询代理的实际功能：
-1. 识别咨询相关请求
-2. 从知识库检索相关信息
-3. 生成专业回答
-4. 处理无关请求（兜底）
+覆盖（全部不依赖 LLM / embedding / 网络）：
+1. 顾问系统提示词与话术家电化（保修/收费/故障排查域）
+2. 订单保修 / 工单进度 纯函数查询意图识别与答复
+3. 非查询输入正确走 RAG（返回 None 由上层决定检索）
 """
 
-import pytest
-from agents.consultant_agent import ConsultantAgent
+from agents.consultant.prompt_builder import PromptBuilder
+from agents.consultant.consultation_processor import ConsultationProcessor
 
 
-class TestConsultantAgentCoreFeatures:
-    """测试咨询代理核心功能"""
-    
-    @pytest.mark.asyncio
-    async def test_should_answer_massage_related_questions(self):
-        """测试：应该能回答按摩相关问题"""
-        agent = ConsultantAgent()
-        await agent.knowledge_retriever.initialize()
-        
-        massage_questions = [
-            "按摩有什么好处？",
-            "深层按摩是什么？", 
-            "按摩可以缓解疲劳吗？"
-        ]
-        
-        for question in massage_questions:
-            response = await agent.consult(question)
-            assert isinstance(response, str), f"应该返回字符串回答，但得到：{type(response)}"
-            assert len(response.strip()) > 0, f"回答不应该为空，问题：{question}"
-            
-            massage_keywords = ["按摩", "massage", "效果", "好处", "肌肉", "血液", "放松"]
-            has_relevant_content = any(keyword in response for keyword in massage_keywords)
-            assert has_relevant_content, f"回答应该与按摩相关，问题：{question}，回答：{response[:200]}..."
-    
-    @pytest.mark.asyncio
-    async def test_should_search_knowledge_from_database(self):
-        """测试：应该能从数据库检索相关知识"""
-        agent = ConsultantAgent()
-        await agent.knowledge_retriever.initialize()
-        
-        question = "按摩有什么好处？"
-        knowledge_results = await agent.knowledge_retriever.search_knowledge(question, top_k=3)
-        
-        assert isinstance(knowledge_results, list), f"应该返回列表，但得到：{type(knowledge_results)}"
-        
-        if len(knowledge_results) > 0:
-            for doc in knowledge_results:
-                assert isinstance(doc, dict), f"知识条目应该是字典格式，但得到：{type(doc)}"
-                assert 'content' in doc, f"知识条目应该有content字段，但得到：{doc.keys()}"
-                
-            all_content = " ".join(doc.get('content', '') for doc in knowledge_results)
-            massage_keywords = ["按摩", "massage", "效果", "好处", "肌肉"]
-            has_relevant = any(keyword in all_content for keyword in massage_keywords)
-            assert has_relevant, f"检索的知识应该与按摩相关，但得到：{all_content[:300]}..."
-    
-    @pytest.mark.asyncio
-    async def test_should_generate_professional_response(self):
-        """测试：应该生成专业的回答"""
-        agent = ConsultantAgent()
-        await agent.knowledge_retriever.initialize()
-        
-        question = "按摩对身体有什么作用？"
-        response = await agent.consult(question)
-        
-        assert len(response) > 50, f"专业回答应该有一定长度，但只有{len(response)}字符：{response}"
-        assert not response.startswith("抱歉"), f"对于按摩相关问题不应该道歉开头：{response[:100]}..."
-        assert "不知道" not in response, f"专业回答不应该说不知道：{response[:100]}..."
-        
-        professional_terms = ["血液循环", "肌肉", "疲劳", "放松", "促进", "缓解"]
-        has_professional_content = any(term in response for term in professional_terms)
-        assert has_professional_content, f"回答应该包含专业词汇，但得到：{response[:200]}..."
+class TestConsultantPromptCopywriting:
+    """售后顾问提示词语料（防按摩文案回归）"""
+
+    def test_system_prompt_is_appliance_aftersales(self):
+        prompt = PromptBuilder().system_prompt
+        assert "安居家电" in prompt
+        assert "售后顾问" in prompt
+        # 领域覆盖：保修 / 收费 / 故障排查 / 400 热线
+        assert "保修" in prompt or "在保" in prompt
+        assert "400-820-9000" in prompt or "订单号" in prompt
+        for legacy in ["按摩", "推拿", "技师", "理疗"]:
+            assert legacy not in prompt, f"系统提示词不应包含按摩时代词汇：{legacy}"
+
+    def test_consultation_prompt_assembles_knowledge_and_question(self):
+        builder = PromptBuilder()
+        prompt = builder.build_consultation_prompt(
+            "冰箱制冷效果差怎么处理？",
+            [{"content": "冰箱保养知识", "score": 0.9}],
+        )
+        assert "安居家电" in prompt
+        assert "冰箱制冷效果差怎么处理？" in prompt
+        assert "冰箱保养知识" in prompt
+
+    def test_knowledge_gap_fallback_mentions_hotline(self):
+        builder = PromptBuilder()
+        prompt = builder.build_consultation_prompt("空调异响", [])
+        assert "400-820-9000" in prompt or "订单号" in prompt
+
+    def test_unrelated_message_token(self):
+        from agents.consultant.response_generator import ResponseGenerator
+
+        generator = ResponseGenerator(llm=None)
+        msg = generator.create_unrelated_message()
+        assert "售后顾问" in msg
 
 
-class TestConsultantAgentEdgeCases:
-    """测试边界情况和错误处理"""
-    
-    @pytest.mark.asyncio
-    async def test_should_handle_empty_or_invalid_input(self):
-        """测试：应该处理空输入或无效输入"""
-        agent = ConsultantAgent()
-        await agent.knowledge_retriever.initialize()
-        
-        invalid_inputs = ["", "   ", "？", "...", "###"]
-        
-        for invalid_input in invalid_inputs:
-            try:
-                response = await agent.consult(invalid_input)
-                assert isinstance(response, str), f"无效输入应该返回字符串，输入：'{invalid_input}'"
-            except Exception as e:
-                assert isinstance(e, (ValueError, TypeError)), \
-                    f"无效输入'{invalid_input}'异常类型错误：{type(e)}"
-    
-    @pytest.mark.asyncio
-    async def test_should_work_with_stream_mode(self):
-        """测试：流式模式应该正常工作"""
-        agent = ConsultantAgent()
-        await agent.knowledge_retriever.initialize()
-        
-        question = "按摩的主要好处是什么？"
-        
-        response_tokens = []
-        async for token in agent.consult_stream(question):
-            response_tokens.append(token)
-        
-        stream_response = "".join(response_tokens)
-        assert len(stream_response) > 0, "流式模式应该返回内容"
-        
-        normal_response = await agent.consult(question)
-        
-        massage_keywords = ["按摩", "好处", "效果", "肌肉", "血液"]
-        stream_has_content = any(keyword in stream_response for keyword in massage_keywords)
-        normal_has_content = any(keyword in normal_response for keyword in massage_keywords)
-        
-        assert stream_has_content or normal_has_content, \
-            f"至少一种模式应该返回相关内容\n流式：{stream_response[:100]}...\n普通：{normal_response[:100]}..."
+class TestLookupPureFunctions:
+    """订单保修 / 工单进度查询纯函数（真实演示库 / 空库两种环境均稳定）"""
+
+    def _processor(self):
+        # 三个组件均可为 None：_try_lookup_answer 只依赖自身正则与查询服务
+        return ConsultationProcessor(None, None, None)
+
+    def test_ticket_no_extraction_accepts_ax_prefix(self):
+        processor = self._processor()
+        assert processor._extract_ticket_no("帮我看看报修单 AX2099123101 的进度") == "AX2099123101"
+        assert processor._extract_ticket_no("AX2099123101 现在怎么样了") == "AX2099123101"
+
+    def test_digits_only_ticket_no_requires_intent_keyword(self):
+        processor = self._processor()
+        # 含"进度/单号"意图且为 11 位以上纯数字（非手机号形态）→ 补 AX 前缀
+        no = processor._extract_ticket_no("查一下 209912310011 单号的进度")
+        assert no is not None and no.startswith("AX")
+        # 无意图关键词时不把纯数字当单号
+        assert processor._extract_ticket_no("我家电话是 209912310011") is None
+        # 位数不足（10 位）不足以判为单号
+        assert processor._extract_ticket_no("查一下 2099123101 单号的进度") is None
+
+    def test_phone_extraction(self):
+        processor = self._processor()
+        assert processor._extract_phone("我的手机13800138000，帮我查") == "13800138000"
+
+    def test_unknown_ticket_returns_guidance(self):
+        """不存在的单号 → 引导核对单号/人工热线（不崩、可空库运行）"""
+        processor = self._processor()
+        answer = processor._try_lookup_answer("帮我查一下报修单 AX2099123199 的进度")
+        assert answer is not None
+        assert "AX2099123199" in answer
+        assert "未查询到" in answer
+        assert "400-820-9000" in answer
+
+    def test_unknown_phone_warranty_query_returns_guidance(self):
+        """不存在的手机号 + 保修意图 → 引导核对手机号"""
+        processor = self._processor()
+        answer = processor._try_lookup_answer("19900000000 买的冰箱还在保修期吗")
+        assert answer is not None
+        assert "未查询到" in answer
+        assert "19900000000" in answer
+
+    def test_pure_phone_without_intent_returns_none(self):
+        """只有手机号、无保修/订单关键词 → 走 RAG，不触发查表"""
+        processor = self._processor()
+        assert processor._try_lookup_answer("帮我看看 13800138000") is None
+
+    def test_general_after_sales_question_returns_none(self):
+        """普通售后咨询（不涉单号/保修查询）→ None，交由 RAG"""
+        processor = self._processor()
+        for question in ["冰箱怎么保养？", "上门维修要收费吗", "你们几点下班"]:
+            assert processor._try_lookup_answer(question) is None, question
+
+    def test_ticket_status_answer_has_structure(self):
+        """单号查询必然命中查表分支：要么找到状态详情，要么返回未查询到引导"""
+        processor = self._processor()
+        answer = processor._try_lookup_answer("报修单 AX2099123199 现在什么进度")
+        assert answer is not None
+        assert any(token in answer for token in ["未查询到", "状态", "工单"])

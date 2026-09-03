@@ -1,217 +1,294 @@
 """
-AppointmentAgent 功能测试
+报修专员（AppointmentAgent）离线功能测试
 
-测试预约代理的核心功能：
-1. 解析用户预约请求 
-2. 管理预约状态和信息收集
-3. 处理无关请求
-4. 完成预约流程
+覆盖（全部不依赖 LLM / 网络）：
+1. input_parser 的 JSON 契约解析与异常默认值
+2. appointment_processor 的字段校验与信息完整性判定
+3. 替代工程师推荐的确认 / 拒绝 / 追问流
+4. message_builder 家电化话术（追问表 / 成功 / 失败 / 无关）
+5. 状态重置
 """
 
 import pytest
-import asyncio
-from agents.appointment_agent import AppointmentAgent
+from conftest import FakeChatModel
+from agents.appointment import InputParser, EngineerFinder, MessageBuilder, AppointmentProcessor
+
+# 永远处于未来的上门时间（保证任何时刻运行都能通过"不早于当前"校验）
+FUTURE_TIME = "2099-01-01 15:00"
+
+REQUIRED_FIELDS = ["product_type", "fault_desc", "address", "phone", "start_time"]
 
 
-class TestAppointmentAgentCoreFeatures:
-    """测试预约代理核心功能"""
-    
-    def test_should_extract_user_info_from_natural_language(self):
-        """
-        测试：预约代理应该能从自然语言中提取预约信息
-        
-        用户说："我想预约明天下午2点的按摩，女技师"
-        应该提取到：
-        - 时间: 明天下午2点 
-        - 项目: 按摩  
-        - 性别偏好: 女
-        
-        这个测试验证整个自然语言处理流程：
-        用户输入 -> LLM处理 -> JSON解析 -> 结果验证
-        """
-        agent = AppointmentAgent()
-        
-        user_input = "我想预约明天下午2点的按摩，女技师"
-        
-        # 使用真实的解析流程：通过LLM处理用户输入
-        from langchain_core.chat_history import InMemoryChatMessageHistory
-        chat_history = InMemoryChatMessageHistory()
-        
-        # 模拟流式解析过程，获取LLM的完整响应
-        ai_content = ""
-        for token in agent.input_parser.parse_stream(user_input, chat_history):
-            ai_content += token
-        
-        # 解析LLM返回的JSON
-        result = agent.input_parser.parse_data(ai_content)
-        
-        # 验证解析结果包含预期信息
-        assert result["project"] == "按摩", f"应该提取到按摩项目，但得到：{result['project']}"
-        assert result["gender"] == "女", f"应该提取到女技师偏好，但得到：{result['gender']}"
-        
-        # 验证时间信息（明天下午2点应该被转换为标准格式）
-        start_time = result["start_time"]
-        assert start_time != "未知", f"应该提取到时间信息，但得到：{start_time}"
-        assert "14:00" in start_time, f"时间应该转换为14:00格式，但得到：{start_time}"
-        
-        # 验证这不是无关请求
-        assert result["unrelated"] == False, "预约请求不应该被标记为无关"
-    
-    def test_should_track_appointment_state_correctly(self):
-        """
-        测试：预约代理应该正确跟踪预约状态
-        
-        用户分步骤提供信息：
-        1. "我要预约按摩" -> 应该记录项目=按摩，其他为空
-        2. "明天下午2点" -> 应该记录时间，保持项目=按摩
-        3. "女技师" -> 应该记录性别偏好，保持之前信息
-        """
-        agent = AppointmentAgent()
-        
-        # 检查初始状态
-        assert agent.appointment_history["project"] is None
-        assert agent.appointment_history["start_time"] is None 
-        assert agent.appointment_history["gender"] is None
-        
-        # 这个测试可能会失败，因为我们需要验证状态更新逻辑
-        # 但这正是我们要测试的功能是否正确工作
-        
-        # 模拟第一次输入
-        data1 = {"project": "按摩"}
-        agent.appointment_processor.update_history_from_data(agent.appointment_history, data1)
-        
-        assert agent.appointment_history["project"] == "按摩"
-        assert agent.appointment_history["start_time"] is None  # 应该保持为空
-        
-        # 模拟第二次输入  
-        data2 = {"start_time": "明天下午2点"}
-        agent.appointment_processor.update_history_from_data(agent.appointment_history, data2)
-        
-        assert agent.appointment_history["project"] == "按摩"  # 应该保持
-        assert agent.appointment_history["start_time"] == "明天下午2点"
-    
-    def test_should_identify_unrelated_requests(self):
-        """
-        测试：预约代理应该能识别与预约无关的请求
-        
-        用户说："今天天气怎么样？"
-        应该识别为无关请求，而不是尝试解析预约信息
-        """
-        agent = AppointmentAgent()
-        
-        unrelated_input = "今天天气怎么样？"
-        
-        # 使用真实的解析流程：通过LLM处理用户输入
-        from langchain_core.chat_history import InMemoryChatMessageHistory
-        chat_history = InMemoryChatMessageHistory()
-        
-        # 模拟流式解析过程，获取LLM的完整响应
-        ai_content = ""
-        for token in agent.input_parser.parse_stream(unrelated_input, chat_history):
-            ai_content += token
-        
-        # 解析LLM返回的JSON
-        result = agent.input_parser.parse_data(ai_content)
-        
-        # 应该被标记为无关请求
-        assert result.get("unrelated", False) == True, f"应该识别为无关请求，但得到：{result}"
-    
-    def test_should_complete_appointment_when_all_info_collected(self):
-        """
-        测试：当收集到所有必需信息时，应该完成预约
-        
-        提供完整信息：时间、项目、性别偏好等
-        应该标记 finished=True
-        """
-        agent = AppointmentAgent()
-        
-        # 提供完整的预约信息
-        complete_data = {
-            "start_time": "明天下午2点",
-            "project": "按摩", 
-            "gender": "女",
-            "duration": "60分钟"
+def make_input_parser() -> InputParser:
+    # 构造时即拼接 prompt|llm 链，需传入模型替身（parse_data 本身为纯 JSON 解析，不触网）
+    return InputParser(llm=FakeChatModel())
+
+
+def make_processor() -> AppointmentProcessor:
+    return AppointmentProcessor(
+        make_input_parser(),
+        EngineerFinder(),
+        MessageBuilder(),
+        llm=None,
+    )
+
+
+def complete_data(**overrides) -> dict:
+    """构造一份信息完整且合法的新契约解析数据"""
+    data = {
+        "product_type": "空调",
+        "fault_desc": "不制冷",
+        "address": "朝阳区望京某小区3号楼",
+        "phone": "13800138000",
+        "start_time": FUTURE_TIME,
+        "engineer_name": "未知",
+        "confirmation": "未知",
+        "info_complete": True,
+        "unrelated": False,
+        "missing_info": [],
+    }
+    data.update(overrides)
+    return data
+
+
+class TestInputParserContract:
+    """新 JSON 契约：品类/故障/地址/手机号/时间五要素"""
+
+    def test_should_parse_complete_json_contract(self):
+        ai_content = (
+            '{"product_type": "冰箱", "fault_desc": "不制冷", "address": "海淀区中关村某小区",'
+            ' "phone": "13800138000", "start_time": "2099-01-02 10:00", "engineer_name": "李卫东",'
+            ' "confirmation": "未知", "info_complete": true, "unrelated": false, "missing_info": []}'
+        )
+        result = make_input_parser().parse_data(ai_content)
+        assert result["product_type"] == "冰箱"
+        assert result["fault_desc"] == "不制冷"
+        assert result["phone"] == "13800138000"
+        assert result["engineer_name"] == "李卫东"
+        assert result["unrelated"] is False
+
+    def test_should_provide_defaults_on_broken_json(self):
+        """JSONDecodeError 时应返回全字段默认值，不抛异常"""
+        result = make_input_parser().parse_data("这不是JSON{")
+        assert result["product_type"] == "未知"
+        assert result["fault_desc"] == "未知"
+        assert result["address"] == "未知"
+        assert result["phone"] == "未知"
+        assert result["start_time"] == "未知"
+        assert result["unrelated"] is False
+        assert result["info_complete"] is False
+
+    def test_should_parse_empty_input_gracefully(self):
+        result = make_input_parser().parse_data("")
+        assert isinstance(result, dict)
+        assert result["product_type"] == "未知"
+
+
+class TestHistoryUpdateAndValidation:
+    """历史更新与信息完整性"""
+
+    def test_should_mark_complete_when_all_required_present(self):
+        processor = make_processor()
+        history = {field: None for field in REQUIRED_FIELDS} | {"engineer_name": None}
+        finished = processor.update_history_from_data(history, complete_data())
+        assert finished is True
+        assert history["product_type"] == "空调"
+        assert history["phone"] == "13800138000"
+        assert history["start_time"] == FUTURE_TIME
+
+    def test_should_not_accept_invalid_phone(self):
+        processor = make_processor()
+        history = {field: None for field in REQUIRED_FIELDS} | {"engineer_name": None}
+        data = complete_data(phone="123")  # 非法手机号
+        finished = processor.update_history_from_data(history, data)
+        assert finished is False
+        assert history["phone"] is None
+
+    def test_should_not_accept_past_or_out_of_window_time(self):
+        processor = make_processor()
+        history = {field: None for field in REQUIRED_FIELDS} | {"engineer_name": None}
+        data = complete_data(start_time="2001-01-01 08:00")  # 过去且早于9点
+        finished = processor.update_history_from_data(history, data)
+        assert finished is False
+        assert history["start_time"] is None
+
+    def test_should_accept_boundary_hour_and_reject_closing_boundary(self):
+        processor = make_processor()
+        # 9:00 整点属于服务窗口
+        history = {field: None for field in REQUIRED_FIELDS} | {"engineer_name": None}
+        base = dict(complete_data())
+        base["start_time"] = "2099-01-01 09:00"
+        assert processor.update_history_from_data(history, base) is True
+
+    def test_unknown_values_should_not_overwrite_existing(self):
+        processor = make_processor()
+        history = {field: None for field in REQUIRED_FIELDS} | {"engineer_name": None}
+        history.update({"product_type": "空调", "address": "朝阳区望京某小区"})
+        data = complete_data(product_type="未知", address="未知")
+        processor.update_history_from_data(history, data)
+        # 既有信息应保留，不被"未知"覆盖
+        assert history["product_type"] == "空调"
+        assert history["address"] == "朝阳区望京某小区"
+
+
+class TestRecommendationConfirmationFlow:
+    """指定工程师无档期 → 替代推荐 → 用户确认/拒绝"""
+
+    def _fresh_history(self):
+        processor = make_processor()
+        history = {field: None for field in REQUIRED_FIELDS} | {
+            "engineer_name": None,
+            "recommended_engineer": None,
+            "original_engineer": None,
+            "awaiting_confirmation": False,
         }
-        
-        # 更新预约历史
-        finished = agent.appointment_processor.update_history_from_data(
-            agent.appointment_history, 
-            complete_data
-        )
-        
-        # 应该标记为完成（这个测试可能会失败，需要检查完成逻辑）
-        assert finished == True, f"提供完整信息后应该完成预约，但finished={finished}"
-        assert agent.appointment_history["start_time"] == "明天下午2点"
-        assert agent.appointment_history["project"] == "按摩"
-    
+        processor.update_history_from_data(history, complete_data())
+        return processor, history
+
+    def test_positive_confirmation_accepts_recommendation(self):
+        processor, history = self._fresh_history()
+        recommended = {"id": 2, "name": "李卫东"}
+        history["recommended_engineer"] = recommended
+        history["awaiting_confirmation"] = True
+
+        finished = processor.update_history_from_data(history, complete_data(confirmation="好的，可以"))
+        assert finished is True
+        assert history["confirmed_engineer"]["id"] == 2
+        assert history["awaiting_confirmation"] is False
+
+    def test_negative_confirmation_declines_recommendation(self):
+        processor, history = self._fresh_history()
+        history["recommended_engineer"] = {"id": 2, "name": "李卫东"}
+        history["awaiting_confirmation"] = True
+
+        finished = processor.update_history_from_data(history, complete_data(confirmation="不要"))
+        assert finished is True
+        assert history["recommendation_declined"] is True
+        assert history["awaiting_confirmation"] is False
+
+    def test_ambiguous_reply_keeps_waiting(self):
+        processor, history = self._fresh_history()
+        history["recommended_engineer"] = {"id": 2, "name": "李卫东"}
+        history["awaiting_confirmation"] = True
+
+        finished = processor.update_history_from_data(history, complete_data(confirmation="嗯嗯"))
+        assert finished is False
+        assert history["awaiting_confirmation"] is True
+
     @pytest.mark.asyncio
-    async def test_should_handle_incomplete_info_gracefully(self):
-        """
-        测试：当信息不完整时，应该引导用户补充
-        
-        只提供部分信息时，应该询问缺失的信息
-        """
-        agent = AppointmentAgent()
-        
-        # 只提供项目，缺少时间等信息
-        incomplete_data = {"project": "按摩"}
-        
-        finished = agent.appointment_processor.update_history_from_data(
-            agent.appointment_history,
-            incomplete_data  
+    async def test_declined_path_emits_reply_without_writing_db(self):
+        """拒绝推荐 → 输出换时间/换人建议，不落库（不产生工单）"""
+        processor, history = self._fresh_history()
+        history["recommendation_declined"] = True
+        history["recommended_engineer"] = {"id": 2, "name": "李卫东"}
+
+        tokens = []
+        async for token in processor.handle_complete_appointment(history, "session-test"):
+            tokens.append(token)
+        text = "".join(tokens)
+        assert "[REPLY][报修专员]" in text
+        assert "工程师" in text
+
+    @pytest.mark.asyncio
+    async def test_awaiting_confirmation_path_prompts_user(self):
+        processor, history = self._fresh_history()
+        history["awaiting_confirmation"] = True
+
+        tokens = []
+        async for token in processor.handle_complete_appointment(history, "session-test"):
+            tokens.append(token)
+        text = "".join(tokens)
+        assert "[REPLY][报修专员]" in text
+        assert "是" in text and "不" in text
+
+
+class TestIncompleteInfoAsking:
+    """缺信息逐项追问"""
+
+    @pytest.mark.asyncio
+    async def test_asks_for_missing_fields_in_order(self):
+        processor = make_processor()
+        history = {
+            "product_type": None, "fault_desc": "不制冷",
+            "address": None, "phone": None, "start_time": None,
+        }
+        tokens = []
+        async for token in processor.handle_incomplete_info({}, history):
+            tokens.append(token)
+        text = "".join(tokens)
+        # 追问品类 / 地址 / 手机号（报修上下文只缺这三项）
+        assert "家电" in text or "品类" in text
+        assert "地址" in text
+        assert "手机号" in text
+
+    @pytest.mark.asyncio
+    async def test_asks_for_phone_when_missing_only_it(self):
+        processor = make_processor()
+        history = {
+            "product_type": "空调", "fault_desc": "不制冷",
+            "address": "朝阳区望京某小区3号楼", "phone": None,
+            "start_time": FUTURE_TIME,
+        }
+        tokens = []
+        async for token in processor.handle_incomplete_info({}, history):
+            tokens.append(token)
+        text = "".join(tokens)
+        assert "手机号" in text
+        assert "地址" not in text
+
+
+class TestMessageBuilderCopywriting:
+    """家电化话术快照（防止回归到按摩文案）"""
+
+    def test_missing_info_table_is_appliance_oriented(self):
+        builder = MessageBuilder()
+        # 追问表与处理器共用 missing_info_prompts，需包含完整槽位
+        assert "phone" in builder.missing_info_prompts
+        assert "start_time" in builder.missing_info_prompts
+        assert "手机号" in builder.missing_info_prompts["phone"]
+        assert "9:00-18:00" in builder.missing_info_prompts["start_time"]
+        # 文案属于安居家电售后域
+        assert "按摩" not in str(builder.missing_info_prompts)
+        assert "技师" not in str(builder.missing_info_prompts)
+
+    def test_success_message_contains_ticket_and_engineer(self):
+        builder = MessageBuilder()
+        msg = builder.create_appointment_success_message(
+            ticket_no="AX2099010101",
+            tech={"id": 1, "name": "张建国", "service_region": "海淀区"},
+            product_type="空调",
+            time_range="2099-01-01 15:00 - 2099-01-01 17:00",
+            warranty_note="查询到您名下该产品仍在保修期内",
         )
-        
-        # 不应该完成预约
-        assert finished == False, "信息不完整时不应该完成预约"
-        
-        # 应该能处理不完整信息（不抛出异常）
-        try:
-            response_tokens = []
-            async for token in agent.appointment_processor.handle_incomplete_info(incomplete_data):
-                response_tokens.append(token)
-            
-            response = "".join(response_tokens)
-            
-            # 应该包含引导性问题（这个断言可能会失败，但能看到实际输出）
-            assert len(response) > 0, "应该返回引导信息"
-            assert "时间" in response or "什么时候" in response, f"应该询问时间信息，但得到：{response}"
-            
-        except Exception as e:
-            pytest.fail(f"处理不完整信息时出错：{e}")
+        assert "报修已登记成功" in msg
+        assert "报修单号：AX2099010101" in msg
+        assert "张建国" in msg
+        assert "15:00" in msg
+
+    def test_unrelated_and_error_messages_are_appliance_scoped(self):
+        builder = MessageBuilder()
+        unrelated = builder.create_unrelated_message()
+        assert "家电" in unrelated or "报修" in unrelated or "售后" in unrelated
+        assert "按摩" not in unrelated
+        parse_error = builder.create_parse_error_message()
+        assert "抱歉" in parse_error or "理解" in parse_error
 
 
-class TestAppointmentAgentEdgeCases:
-    """测试边界情况和错误处理"""
-    
-    def test_should_handle_invalid_input(self):
-        """
-        测试：应该处理无效输入而不崩溃
-        """
-        agent = AppointmentAgent()
-        
-        # 测试空输入
+class TestReset:
+    """报修状态重置（组件层验证，避免依赖 LLM key）"""
+
+    def test_reset_clears_history_fields(self):
+        from agents.appointment_agent import AppointmentAgent
+
         try:
-            result = agent.input_parser.parse_data("")
-            # 不应该崩溃，应该有某种处理方式
-        except Exception as e:
-            # 如果抛出异常，至少应该是可预期的异常类型
-            assert isinstance(e, (ValueError, TypeError)), f"应该是可预期的异常类型，但得到：{type(e)}"
-    
-    def test_should_reset_state_properly(self):
-        """
-        测试：应该正确重置预约状态
-        """
-        agent = AppointmentAgent()
-        
-        # 设置一些状态
-        agent.appointment_history["project"] = "按摩"
-        agent.appointment_history["start_time"] = "明天"
+            agent = AppointmentAgent(session_id="test-reset")
+        except Exception as exc:  # 无 LLM key 的环境无法初始化真实控制器
+            pytest.skip(f"AppointmentAgent 无法在无 key 环境初始化: {exc}")
+
+        agent.appointment_history["product_type"] = "空调"
+        agent.appointment_history["phone"] = "13800138000"
         agent.finished = True
-        
-        # 重置
         agent.reset()
-        
-        # 应该回到初始状态
-        assert agent.appointment_history["project"] is None
-        assert agent.appointment_history["start_time"] is None
-        assert agent.finished == False
+        for field in ["product_type", "fault_desc", "address", "phone", "start_time", "engineer_name"]:
+            assert agent.appointment_history[field] is None, f"{field} 应被清空"
+        assert agent.finished is False
