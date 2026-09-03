@@ -58,3 +58,6 @@ Thumbs.db
 
 # --- Jupyter ---
 .ipynb_checkpoints/
+
+# --- Personal Claude skills (local only, not for publish) ---
+.github/skills/
