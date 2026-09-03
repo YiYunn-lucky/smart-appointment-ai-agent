@@ -8,6 +8,7 @@
 4. 提供统一的Agent调用接口
 """
 
+import re
 from typing import Any, AsyncGenerator
 from .state_manager import StateManager
 
@@ -50,21 +51,21 @@ class AgentRouter:
             str: 流式响应内容
         """
         if not self.appointment_agent:
-            yield "[ERROR]预约服务暂时不可用"
+            yield "[ERROR]报修服务暂时不可用"
             return
-        
+
         # 转换状态
         self.state_manager.transition_to_appointment()
-        
+
         # 生成思考提示
         yield "[THOUGHT][客服调度] 客服调度：检测到家电报修/上门预约任务，转给报修专员处理。"
-        
-        # 调用预约Agent
+
+        # 调用报修Agent
         try:
             async for token in self.appointment_agent.run_stream(user_input=task):
                 yield token
         except Exception as e:
-            yield f"[ERROR]预约处理失败: {str(e)}"
+            yield f"[ERROR]报修处理失败: {str(e)}"
             self.state_manager.reset_to_classify()
     
     async def route_to_consultation(self, task: str) -> AsyncGenerator[str, None]:
@@ -96,13 +97,73 @@ class AgentRouter:
             yield f"[ERROR]咨询处理失败: {str(e)}"
             self.state_manager.reset_to_classify()
     
+    async def route_to_complaint(self, task: str) -> AsyncGenerator[str, None]:
+        """
+        处理投诉/转人工请求：登记转人工记录并回执（单轮处理，随后回到分类状态）
+
+        Args:
+            task: 用户任务内容
+
+        Yields:
+            str: 流式响应内容
+        """
+        try:
+            yield "[THOUGHT][客服调度] 客服调度：检测到投诉/转人工诉求，登记人工客服记录。"
+            reply = self._register_human_handover(task)
+            yield "[REPLY][客服调度]"
+            for char in reply:
+                yield char
+        except Exception as e:
+            yield f"[ERROR]转人工登记失败: {str(e)}"
+        finally:
+            # 单轮处理后回到分类状态，等待下一条消息
+            self.state_manager.reset_to_classify()
+
+    def _register_human_handover(self, task: str) -> str:
+        """登记转人工记录，返回客户回执话术"""
+        # 从请求中尝试提取手机号与报修单号
+        phone_match = re.search(r"1\d{10}", task)
+        ticket_match = re.search(r"AX\d{10,14}", task, re.IGNORECASE)
+
+        ticket_text = ""
+        ticket_id = None
+        ticket_no = None
+        if ticket_match:
+            ticket_no = ticket_match.group(0).upper()
+            try:
+                from services.ticket_service import TicketService
+                ticket = TicketService().get_ticket_by_no(ticket_no)
+                if ticket:
+                    ticket_id = ticket['id']
+                    ticket_text = f"，已关联报修单 {ticket_no}"
+                else:
+                    ticket_text = f"，您提到的报修单 {ticket_no} 未查询到，将一并核实"
+            except Exception:
+                pass
+
+        issue_summary = re.sub(r"\s+", " ", task)[:200]
+        phone = phone_match.group(0) if phone_match else None
+
+        from services.handover_service import HandoverService
+        HandoverService().create_handover(
+            issue_summary=issue_summary,
+            user_phone=phone,
+            ticket_id=ticket_id
+        )
+
+        if phone:
+            return (f"您好，已为您登记转人工处理{ticket_text}，售后专员将在30分钟内回电"
+                    f"{phone}为您跟进解决，请留意接听。感谢您的理解与信任！")
+        return (f"您好，已为您登记转人工处理{ticket_text}，售后专员将尽快与您联系。"
+                f"为确保及时回电，您也可以提供11位手机号。感谢您的理解与信任！")
+
     async def handle_unsupported_task(self, category: str) -> AsyncGenerator[str, None]:
         """
         处理不支持的任务类型
-        
+
         Args:
             category: 任务分类结果
-            
+
         Yields:
             str: 回复内容
         """
@@ -137,7 +198,7 @@ class AgentRouter:
         """获取可用的服务列表"""
         services = []
         if self.appointment_agent:
-            services.append("预约服务")
+            services.append("报修预约服务")
         if self.consultant_agent:
-            services.append("咨询服务")
+            services.append("售后咨询服务")
         return services

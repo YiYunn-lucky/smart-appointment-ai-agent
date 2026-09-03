@@ -103,7 +103,7 @@ class AppointmentProcessor:
     # ---------- 无关请求 ----------
 
     async def handle_unrelated_request(self, user_input: str, unrelated_callback, state) -> AsyncGenerator[str, None]:
-        """处理与报修预约无关的请求（转交归类机器人）"""
+        """处理与报修预约无关的请求（转交客服调度重新分类）"""
         # 注意：这里不重置状态，因为在调用处已经设置了状态
         # 保持报修历史不被清空
         if unrelated_callback:

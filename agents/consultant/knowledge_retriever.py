@@ -20,7 +20,7 @@ class KnowledgeRetriever:
         if not self.kb_initialized:
             await self.knowledge_service.initialize()
             self.kb_initialized = True
-            print("✅ 咨询机器人知识库服务已初始化")
+            print("✅ 售后顾问知识库服务已初始化")
     
     async def search_knowledge(self, query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         """搜索相关知识"""

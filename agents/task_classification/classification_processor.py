@@ -52,13 +52,17 @@ class ClassificationProcessor:
             if self.state_manager.should_classify():
                 # 进行任务分类
                 category = await self.task_classifier.classify_task(task)
-                
+
                 # 根据分类结果路由
                 if category == "appointment" and self.agent_router.appointment_agent:
                     async for token in self.agent_router.route_to_appointment(task):
                         yield token
                 elif category == "query" and self.agent_router.consultant_agent:
                     async for token in self.agent_router.route_to_consultation(task):
+                        yield token
+                elif category == "complaint":
+                    # 投诉/转人工：单轮登记处理
+                    async for token in self.agent_router.route_to_complaint(task):
                         yield token
                 else:
                     # 不支持的任务类型
@@ -88,7 +92,7 @@ class ClassificationProcessor:
             # 检查是否需要进行分类
             if self.state_manager.should_classify():
                 category = await self.task_classifier.classify_task(task)
-                
+
                 if category == "appointment" and self.agent_router.appointment_agent:
                     self.state_manager.transition_to_appointment()
                     return await self.agent_router.appointment_agent.run(user_input=task)
@@ -96,6 +100,12 @@ class ClassificationProcessor:
                     self.state_manager.transition_to_consultation()
                     async with self.agent_router.consultant_agent as agent:
                         return await agent.consult(task)
+                elif category == "complaint":
+                    # 投诉/转人工：单轮登记处理
+                    result = ""
+                    async for token in self.agent_router.route_to_complaint(task):
+                        result += token
+                    return result
                 else:
                     return "抱歉，我暂时无法处理这类任务。安居家电售后客服可以协助您：家电报修登记、售后政策咨询、订单保修查询、投诉转人工。"
             else:
