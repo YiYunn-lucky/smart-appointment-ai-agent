@@ -133,6 +133,24 @@ class TestTicketLifecycle:
         )
         assert svc.assign_ticket(replacement["id"], engineers["张建国"]) is not None
 
+    def test_completed_releases_schedule_for_reassign(self, temp_db_path):
+        svc, engineers = self._svc(temp_db_path)
+        start = _future_window()
+        ticket = svc.create_ticket(
+            user_phone="13800138000", product_type="空调", fault_desc="不制冷",
+            address="海淀区某小区", start_time=start
+        )
+        assert svc.assign_ticket(ticket["id"], engineers["张建国"]) is not None
+        assert svc.update_status(ticket["id"], "in_progress") is not None
+        assert svc.update_status(ticket["id"], "completed") is not None
+
+        # 完成同样释放忙档：同工程师同窗口可重新接新单
+        replacement = svc.create_ticket(
+            user_phone="13800138000", product_type="空调", fault_desc="异响",
+            address="海淀区另一小区", start_time=start
+        )
+        assert svc.assign_ticket(replacement["id"], engineers["张建国"]) is not None
+
     def test_change_engineer_reassigns(self, temp_db_path):
         svc, engineers = self._svc(temp_db_path)
         ticket = svc.create_ticket(

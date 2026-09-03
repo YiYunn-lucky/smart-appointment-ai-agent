@@ -138,7 +138,7 @@ class TicketService:
             updates = {'status': new_status}
             if new_status in ('completed', 'cancelled'):
                 updates['closed_at'] = TimeConfig.naive_now()
-            if new_status == 'cancelled':
+                # 工单结束（完成/取消）即释放工程师忙档，工程师可承接新工单
                 self.engineer_repo.release_schedule_by_ticket(ticket_id)
 
             self.ticket_repo.update_ticket(ticket_id, **updates)

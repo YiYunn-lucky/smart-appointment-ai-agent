@@ -36,6 +36,8 @@ class ClassificationProcessor:
         self.state_manager = state_manager
         self.agent_router = agent_router
         self.unrelated_handler = unrelated_handler
+        # 单条消息内"子任务转回再分类"的轮次计数：售后顾问等子任务误判转回时防止无限递归
+        self._classify_rounds = 0
     
     async def process_task_stream(self, task: str) -> AsyncGenerator[str, None]:
         """
@@ -50,6 +52,16 @@ class ClassificationProcessor:
         try:
             # 检查是否需要进行分类
             if self.state_manager.should_classify():
+                # 子任务转回反复分类（如售后顾问对同一请求误判为无关）超过上限时兜底，
+                # 避免客服调度 ↔ 子任务间无限递归
+                self._classify_rounds += 1
+                if self._classify_rounds > 3:
+                    self._classify_rounds = 0
+                    self.state_manager.reset_to_classify()
+                    async for token in self.agent_router.handle_unsupported_task('other'):
+                        yield token
+                    return
+
                 # 进行任务分类
                 category = await self.task_classifier.classify_task(task)
 
@@ -68,6 +80,8 @@ class ClassificationProcessor:
                     # 不支持的任务类型
                     async for token in self.agent_router.handle_unsupported_task(category):
                         yield token
+                # 本条消息的路由链正常结束（未发生转回递归）→ 重置轮次计数
+                self._classify_rounds = 0
             else:
                 # 根据当前状态继续处理
                 async for token in self.agent_router.route_by_state(task):

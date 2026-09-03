@@ -73,6 +73,16 @@ class ConsultantAgent:
         
         这是主要的咨询入口点，协调各个组件完成咨询流程
         """
+        # 0. 工单进度/订单保修等查询意图先查库答复：命中即结束，
+        #    避免"查询报修单进度"等请求在售后顾问二次分类中被误判为无关而转回死循环
+        if self.consultation_processor.try_lookup(user_input):
+            async for token in self.consultation_processor.process_consultation_stream(
+                user_input, self.session_id
+            ):
+                yield token
+            self._reset_state_after_consultation()
+            return
+
         # 1. 检查是否与咨询相关
         is_consultation = await self.consultation_classifier.is_consultation_related(user_input)
         

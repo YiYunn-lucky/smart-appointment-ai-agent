@@ -93,6 +93,10 @@ class ConsultationProcessor:
     # 订单/工单/保修查询（纯函数，不依赖LLM）
     # ===========================================
 
+    def try_lookup(self, user_input: str):
+        """公开的查询意图探测：命中订单/工单查询返回答复文本，否则返回 None"""
+        return self._try_lookup_answer(user_input)
+
     def _try_lookup_answer(self, user_input: str):
         """尝试按查询意图直接查库答复；非查询意图返回None走RAG"""
         try:

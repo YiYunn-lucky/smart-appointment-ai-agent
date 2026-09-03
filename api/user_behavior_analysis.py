@@ -42,11 +42,18 @@ class ReminderRequest(BaseModel):
     phone: str
 
 
+class AvailableSlot(BaseModel):
+    """工程师可约上门时段（与 user_behavior_agent 槽位结构一致）"""
+    date: str = ""
+    time: str = ""
+    formatted: str = ""
+
+
 class ReminderResponse(BaseModel):
     """回访消息响应"""
     phone: str = ""
     message: str
-    engineer_available_times: Optional[List[str]] = None
+    engineer_available_times: Optional[List[AvailableSlot]] = None
 
 
 class StatsResponse(BaseModel):
