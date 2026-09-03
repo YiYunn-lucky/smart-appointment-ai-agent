@@ -2,7 +2,7 @@
 FastAPI应用程序
 
 主应用程序入口，配置中间件、路由和异常处理
-自动初始化知识库和技师数据
+自动初始化知识库、工程师和演示订单数据
 """
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
@@ -37,40 +37,53 @@ class SearchRequest(BaseModel):
     category: Optional[str] = None
 
 async def initialize_system():
-    """系统启动时自动初始化"""
+    """系统启动时自动初始化（各模块独立容错，缺少 Embedding Key 时也能启动）"""
+    logger.info("🚀 正在初始化安居家电售后智能客服系统...")
+
+    # 初始化知识库服务
     try:
-        logger.info("🚀 正在初始化智能预约系统...")
-        
-        # 初始化知识库服务
         logger.info("📚 初始化知识库服务...")
         knowledge_service = KnowledgeService()
         await knowledge_service.initialize()
-        
-        # 初始化技师服务
-        logger.info("👨‍⚕️ 初始化技师服务...")
+    except Exception as e:
+        logger.error(f"⚠️ 知识库初始化失败，配置 Embedding Key 后重启可恢复: {e}")
+
+    # 初始化工程师数据
+    try:
+        logger.info("🧑‍🔧 初始化工程师数据...")
         engineer_service = EngineerService()
         engineer_service.initialize_default_engineers()
-        
-        # 初始化推荐服务
-        logger.info("🎯 启动推荐调度服务...")
+    except Exception as e:
+        logger.error(f"⚠️ 工程师数据初始化失败: {e}")
+
+    # 初始化演示订单（保修查询演示数据）
+    try:
+        logger.info("🧾 初始化演示订单数据...")
+        from services.order_service import OrderService
+        order_service = OrderService()
+        order_service.initialize_default_orders()
+    except Exception as e:
+        logger.error(f"⚠️ 演示订单初始化失败: {e}")
+
+    # 启动售后提醒调度服务
+    try:
+        logger.info("🎯 启动售后提醒调度服务...")
         recommendation_service = RecommendationService()
         if recommendation_service.start_scheduler():
-            logger.info("✅ 推荐调度服务启动成功")
+            logger.info("✅ 售后提醒调度服务启动成功")
         else:
-            logger.warning("⚠️ 推荐调度服务启动失败")
-        
-        logger.info("✅ 系统初始化完成！")
-        
+            logger.warning("⚠️ 售后提醒调度服务启动失败")
     except Exception as e:
-        logger.error(f"❌ 系统初始化失败: {e}")
-        raise
+        logger.error(f"⚠️ 售后提醒调度服务异常: {e}")
+
+    logger.info("✅ 系统初始化完成！")
 
 def create_app() -> FastAPI:
     """创建FastAPI应用实例"""
     
     app = FastAPI(
-        title="智能预约AI代理",
-        description="提供预约管理、智能咨询、用户行为分析等功能的API服务",
+        title="安居家电售后智能客服系统",
+        description="提供家电报修预约、售后咨询、订单保修查询、投诉转人工等功能的API服务",
         version="1.0.0",
         docs_url="/docs",
         redoc_url="/redoc"

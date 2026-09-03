@@ -10,12 +10,12 @@ from .consultant import (
 
 class ConsultantAgent:
     """
-    咨询机器人主控制器
-    
+    售后顾问主控制器
+
     职责：
     1. 初始化各个组件
     2. 管理会话状态
-    3. 协调整个咨询流程
+    3. 协调整个售后咨询流程
     """
     
     def __init__(self, session_id=None):
@@ -44,7 +44,7 @@ class ConsultantAgent:
     async def __aenter__(self):
         """异步上下文管理器入口"""
         await self.knowledge_retriever.initialize()
-        print("咨询机器人已启动（数据库RAG模式）")
+        print("售后顾问已启动（数据库RAG模式）")
         return self
 
     async def __aexit__(self, exc_type, exc, tb):

@@ -2,55 +2,94 @@
 推荐调度服务
 
 职责：
-1. 定时生成用户行为推荐
+1. 定时生成售后回访/提醒推荐（保修期到期提醒、维修完成满意度回访）
 2. 管理推荐调度任务
 3. 提供手动触发推荐功能
 """
 
-import asyncio
 import schedule
 import time
 import threading
-from datetime import datetime
+from datetime import timedelta
 from typing import List, Dict, Any, Optional
 import logging
 
 logger = logging.getLogger(__name__)
 
+# 保修期 30 天内到期视为「即将出保」
+WARRANTY_EXPIRY_WINDOW_DAYS = 30
+
+
 class RecommendationService:
     """推荐调度服务类"""
-    
+
     def __init__(self):
-        # 延迟导入避免循环依赖
-        self._behavior_agent = None
         self.is_running = False
         self.scheduler_thread = None
-    
-    @property
-    def behavior_agent(self):
-        """懒加载用户行为服务"""
-        if self._behavior_agent is None:
-            from services.user_behavior_service import UserBehaviorService
-            self._behavior_agent = UserBehaviorService()
-        return self._behavior_agent
-    
+
     def generate_recommendations_job(self) -> Optional[List[Dict[str, Any]]]:
-        """定时生成推荐的任务"""
+        """定时生成售后提醒任务：
+        1. 保修期 30 天内到期的订单 -> 延保/检测提醒
+        2. 近 24 小时完工的报修工单 -> 满意度回访
+        """
         try:
-            logger.info("开始执行定时推荐生成任务...")
-            # 通过用户行为服务分析用户模式并生成推荐
-            # TODO: 实现基于用户行为的推荐逻辑
+            from db.db_router import DatabaseRouter
+            from config.time_config import TimeConfig
+            router = DatabaseRouter()
+            now = TimeConfig.naive_now()
             recommendations = []
-            
+            logger.info("开始执行定时推荐生成任务...")
+
+            # 1) 保修期临近到期提醒（按手机号去重生成一条汇总提醒）
+            orders = router.orders.get_all_orders()
+            expiring_phones = {}
+            for order in orders:
+                if not order['purchase_date'] or not order['warranty_years']:
+                    continue
+                warranty_end = order['purchase_date'] + timedelta(days=365 * order['warranty_years'])
+                days_left = (warranty_end - now).days
+                if 0 <= days_left <= WARRANTY_EXPIRY_WINDOW_DAYS:
+                    expiring_phones.setdefault(order['user_phone'], []).append(
+                        (order['product_type'], warranty_end, days_left)
+                    )
+            for phone, items in expiring_phones.items():
+                desc = "、".join(
+                    f"{product_type}（{warranty_end.strftime('%Y-%m-%d')} 到期）" for product_type, warranty_end, _ in items
+                )
+                rec_id = router.user_behavior.create_recommendation(
+                    user_id=phone,
+                    recommendation_type='warranty_expiry_reminder',
+                    content=f"您名下 {desc} 即将超出保修期，可考虑办理延保或预约一次全面检测保养，回复「延保/保养」即可为您安排。"
+                )
+                logger.info(f"生成保修到期提醒：客户 {phone}, 推荐ID={rec_id}")
+                recommendations.append({'type': 'warranty_expiry_reminder', 'phone': phone})
+
+            # 2) 近 24 小时完工工单 -> 满意度回访
+            recent_tickets = [
+                t for t in router.tickets.get_tickets(status='completed')
+                if t.get('closed_at') and (now - t['closed_at']) < timedelta(hours=24)
+            ]
+            for ticket in recent_tickets:
+                rec_id = router.user_behavior.create_recommendation(
+                    user_id=ticket['user_phone'],
+                    recommendation_type='satisfaction_followup',
+                    content=(
+                        f"您好，您报修的{ticket['product_type']}故障（工单号 {ticket['ticket_no']}）"
+                        f"已于 {ticket['closed_at'].strftime('%Y-%m-%d %H:%M')} 维修完成"
+                        f"（工程师：{ticket.get('engineer_name') or '待确认'}）。"
+                        f"请问本次维修服务您是否满意？如需帮助可随时联系我们。"
+                    ),
+                    engineer_id=ticket.get('engineer_id')
+                )
+                logger.info(f"生成满意度回访：工单 {ticket['ticket_no']}, 推荐ID={rec_id}")
+                recommendations.append({'type': 'satisfaction_followup', 'ticket_no': ticket['ticket_no']})
+
             if recommendations:
-                logger.info(f"成功生成 {len(recommendations)} 条推荐:")
-                for rec in recommendations:
-                    logger.info(f"- {rec['type']}: {rec['content'][:50]}...")
+                logger.info(f"成功生成 {len(recommendations)} 条售后提醒/回访")
                 return recommendations
-            else:
-                logger.info("本次没有生成新的推荐")
-                return None
-                
+            logger.info("本次没有生成新的推荐")
+            return None
+
         except Exception as e:
             logger.error(f"定时推荐生成任务失败: {str(e)}")
             return None

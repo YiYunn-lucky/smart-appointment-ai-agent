@@ -79,9 +79,9 @@ class TaskClassificationAgent:
 
     async def handle_unrelated(self, user_input):
         """处理无关请求（同步版本）"""
-        # 与预约无关的请求应该重新进行分类，而不是直接拒绝
-        print(f"[DEBUG] 预约机器人转交的请求：{user_input}")
-        
+        # 与当前子任务无关的请求应该重新进行分类，而不是直接拒绝
+        print(f"[DEBUG] 子任务机器人转交的请求：{user_input}")
+
         # 重新进行任务分类
         result = ""
         async for token in self.classification_processor.process_task_stream(user_input):
@@ -90,9 +90,9 @@ class TaskClassificationAgent:
 
     async def handle_unrelated_async(self, user_input):
         """处理无关请求（异步流版本）"""
-        # 与预约无关的请求应该重新进行分类，而不是直接拒绝
-        print(f"[DEBUG] 预约机器人转交的请求：{user_input}")
-        
+        # 与当前子任务无关的请求应该重新进行分类，而不是直接拒绝
+        print(f"[DEBUG] 子任务机器人转交的请求：{user_input}")
+
         # 重新进行任务分类
         async for token in self.classification_processor.process_task_stream(user_input):
             yield token
@@ -109,6 +109,6 @@ class TaskClassificationAgent:
         """重置对话状态"""
         self.classification_processor.reset_conversation()
     
-    def set_business_context(self, service_name: str = "推拿服务"):
+    def set_business_context(self, service_name: str = "安居家电售后服务"):
         """设置业务上下文"""
         self.unrelated_handler.set_business_context(service_name)

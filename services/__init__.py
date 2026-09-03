@@ -3,8 +3,10 @@
 
 包含：
 - 知识库服务
-- 技师服务  
-- 预约服务
+- 工程师服务
+- 报修工单服务
+- 订单/保修服务
+- 转人工服务
 - 用户行为服务
 - 推荐调度服务
 - 文本嵌入工具
@@ -18,7 +20,9 @@ from .text_embedding import (
 )
 from .knowledge_service import KnowledgeService
 from .engineer_service import EngineerService
-from .appointment_service import AppointmentService
+from .ticket_service import TicketService
+from .order_service import OrderService
+from .handover_service import HandoverService
 from .user_behavior_service import UserBehaviorService
 from .recommendation_service import RecommendationService
 
@@ -29,7 +33,9 @@ __all__ = [
     'load_engineer_embeddings',
     'KnowledgeService',
     'EngineerService',
-    'AppointmentService',
+    'TicketService',
+    'OrderService',
+    'HandoverService',
     'UserBehaviorService',
     'RecommendationService'
 ]

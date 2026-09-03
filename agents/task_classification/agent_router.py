@@ -57,7 +57,7 @@ class AgentRouter:
         self.state_manager.transition_to_appointment()
         
         # 生成思考提示
-        yield "[THOUGHT][归类机器人] 归类机器人：我发现这是一个预约任务，我将转给预约机器人处理。"
+        yield "[THOUGHT][客服调度] 客服调度：检测到家电报修/上门预约任务，转给报修专员处理。"
         
         # 调用预约Agent
         try:
@@ -85,7 +85,7 @@ class AgentRouter:
         self.state_manager.transition_to_consultation()
         
         # 生成思考提示
-        yield "[THOUGHT][归类机器人] 归类机器人：我发现这是一个咨询任务，我将转给咨询机器人处理。"
+        yield "[THOUGHT][客服调度] 客服调度：检测到售后咨询任务，转给售后顾问处理。"
         
         # 调用咨询Agent
         try:
@@ -106,8 +106,8 @@ class AgentRouter:
         Yields:
             str: 回复内容
         """
-        reply = "暂不支持该类型任务。请只询问和按摩、预约相关的问题。"
-        yield "[REPLY][归类机器人]"
+        reply = "抱歉，我暂时无法处理这类任务。安居家电售后客服可以协助您：家电报修登记、售后政策咨询、订单保修查询、投诉转人工。请问有什么可以帮您？"
+        yield "[REPLY][客服调度]"
         for char in reply:
             yield char
     

@@ -97,7 +97,7 @@ class ClassificationProcessor:
                     async with self.agent_router.consultant_agent as agent:
                         return await agent.consult(task)
                 else:
-                    return "暂不支持该类型任务。请只询问和按摩、预约相关的问题。"
+                    return "抱歉，我暂时无法处理这类任务。安居家电售后客服可以协助您：家电报修登记、售后政策咨询、订单保修查询、投诉转人工。"
             else:
                 # 根据当前状态继续处理
                 if self.state_manager.is_in_appointment_flow():

@@ -2,7 +2,6 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from datetime import datetime
 
 Base = declarative_base()
 
@@ -10,8 +9,8 @@ class Engineer(Base):
     __tablename__ = 'engineers'
     id = Column(Integer, primary_key=True)
     name = Column(String, unique=True)
-    gender = Column(String, nullable=True)      # 新增性别字段
-    strength = Column(String, nullable=True)    # 新增力气/倾向性字段
+    skills = Column(Text, nullable=True)            # 品类专长描述，供向量相似匹配
+    service_region = Column(String, nullable=True)  # 服务区域，如"海淀区/朝阳区"
     schedules = relationship("EngineerSchedule", back_populates="engineer", cascade="all, delete-orphan")
 
 class EngineerSchedule(Base):
@@ -21,8 +20,47 @@ class EngineerSchedule(Base):
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
     status = Column(String, nullable=False)  # 'busy' or 'free'
-    appointment_id = Column(Integer, nullable=True)
+    ticket_id = Column(Integer, nullable=True)  # 关联报修工单ID（busy 时写入）
     engineer = relationship("Engineer", back_populates="schedules")
+
+class RepairTicket(Base):
+    __tablename__ = 'repair_tickets'
+    id = Column(Integer, primary_key=True)
+    ticket_no = Column(String, unique=True)  # AX + YYYYMMDD + 当日序号
+    user_name = Column(String, nullable=True)
+    user_phone = Column(String, nullable=False)
+    product_type = Column(String, nullable=False)  # 空调/冰箱/洗衣机/热水器/净水器/烟灶
+    fault_desc = Column(Text, nullable=False)
+    address = Column(Text, nullable=False)
+    start_time = Column(DateTime, nullable=False)   # 约定上门开始时间
+    end_time = Column(DateTime, nullable=False)     # 约定上门结束时间（默认+120分钟）
+    status = Column(String, nullable=False, default='pending')  # pending/assigned/in_progress/completed/cancelled
+    engineer_id = Column(Integer, ForeignKey('engineers.id'), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    closed_at = Column(DateTime, nullable=True)  # completed/cancelled 时间
+    engineer = relationship("Engineer")
+
+class Order(Base):
+    __tablename__ = 'orders'
+    id = Column(Integer, primary_key=True)
+    user_phone = Column(String, nullable=False, index=True)
+    user_name = Column(String, nullable=True)
+    product_type = Column(String, nullable=False)
+    brand_model = Column(String, nullable=True)
+    purchase_date = Column(DateTime, nullable=True)
+    warranty_years = Column(Integer, default=3)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class HumanHandover(Base):
+    __tablename__ = 'human_handovers'
+    id = Column(Integer, primary_key=True)
+    user_name = Column(String, nullable=True)
+    user_phone = Column(String, nullable=True)
+    ticket_id = Column(Integer, ForeignKey('repair_tickets.id'), nullable=True)
+    issue_summary = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    ticket = relationship("RepairTicket")
 
 class KnowledgeDocument(Base):
     __tablename__ = 'knowledge_documents'
@@ -38,8 +76,8 @@ class KnowledgeDocument(Base):
 class UserBehavior(Base):
     __tablename__ = 'user_behaviors'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String, nullable=False, default='default_user')  # 单用户场景使用默认用户ID
-    action_type = Column(String, nullable=False)  # 'appointment', 'consultation', 'inquiry'
+    user_id = Column(String, nullable=False, default='guest')  # 手机号标识客户；未识别时使用 'guest'
+    action_type = Column(String, nullable=False)  # 'appointment'/'repair', 'consultation', 'handover'
     action_data = Column(JSON, nullable=True)  # 存储行为相关的详细数据
     engineer_id = Column(Integer, ForeignKey('engineers.id'), nullable=True)
     session_id = Column(String, nullable=True)
@@ -49,8 +87,8 @@ class UserBehavior(Base):
 class UserPreference(Base):
     __tablename__ = 'user_preferences'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String, nullable=False, default='default_user')
-    preference_type = Column(String, nullable=False)  # 'engineer', 'time', 'service', 'duration'
+    user_id = Column(String, nullable=False, default='guest')
+    preference_type = Column(String, nullable=False)  # 'product', 'fault', 'time_slot', 'engineer'
     preference_value = Column(String, nullable=False)
     confidence_score = Column(Integer, default=1)  # 偏好的置信度（出现次数）
     last_updated = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -58,8 +96,8 @@ class UserPreference(Base):
 class UserRecommendation(Base):
     __tablename__ = 'user_recommendations'
     id = Column(Integer, primary_key=True)
-    user_id = Column(String, nullable=False, default='default_user')
-    recommendation_type = Column(String, nullable=False)  # 'engineer_available', 'return_reminder', 'service_suggestion'
+    user_id = Column(String, nullable=False, default='guest')
+    recommendation_type = Column(String, nullable=False)  # 'warranty_expiry_reminder', 'satisfaction_followup', 'maintenance_advice'
     content = Column(Text, nullable=False)
     engineer_id = Column(Integer, ForeignKey('engineers.id'), nullable=True)
     is_sent = Column(Integer, default=0)  # 是否已发送

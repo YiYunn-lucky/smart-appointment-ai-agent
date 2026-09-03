@@ -28,6 +28,11 @@ class TimeConfig:
         return cls.now().replace(hour=0, minute=0, second=0, microsecond=0)
     
     @classmethod
+    def naive_now(cls) -> datetime:
+        """获取当前北京时间（去除时区信息，用于与 naive datetime 存储值比较）"""
+        return cls.now().replace(tzinfo=None)
+
+    @classmethod
     def current_date_str(cls, format_str: str = "%Y年%m月%d日") -> str:
         """获取当前日期字符串（北京时间）"""
         return cls.now().strftime(format_str)
@@ -63,8 +68,8 @@ class TimeConfig:
     
     @classmethod
     def get_business_hours(cls) -> tuple:
-        """获取营业时间范围"""
-        return (12, 22)  # 12:00 - 22:00
+        """获取服务时间范围（上门维修窗口）"""
+        return (9, 18)  # 9:00 - 18:00
     
     @classmethod
     def is_business_time(cls, dt: Optional[datetime] = None) -> bool:

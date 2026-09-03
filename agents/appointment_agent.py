@@ -3,11 +3,10 @@ import uuid
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from config.model_provider import create_chat_model
 from .appointment import (
-    InputParser, 
-    EngineerFinder, 
-    AppointmentProcessor, 
-    MessageBuilder, 
-    AppointmentDatabase
+    InputParser,
+    EngineerFinder,
+    AppointmentProcessor,
+    MessageBuilder
 )
 
 load_dotenv()
@@ -15,12 +14,12 @@ load_dotenv()
 
 class AppointmentAgent:
     """
-    预约机器人主控制器
-    
+    报修专员控制器
+
     职责：
     1. 初始化各个组件
     2. 管理会话状态
-    3. 协调整个预约流程
+    3. 协调整个家电报修登记流程
     """
     
     def __init__(self, session_id=None, unrelated_callback=None):
@@ -31,17 +30,15 @@ class AppointmentAgent:
         
         # 初始化LLM
         self.llm = self._initialize_llm()
-        
+
         # 初始化组件
         self.input_parser = InputParser(self.llm)
         self.engineer_finder = EngineerFinder()
         self.message_builder = MessageBuilder()
-        self.appointment_database = AppointmentDatabase()
         self.appointment_processor = AppointmentProcessor(
-            self.input_parser, 
+            self.input_parser,
             self.engineer_finder,
-            self.message_builder, 
-            self.appointment_database,
+            self.message_builder,
             self.llm
         )
         
@@ -65,14 +62,13 @@ class AppointmentAgent:
         return chat_history
     
     def reset(self):
-        """重置预约历史和状态"""
+        """重置报修历史和状态"""
         self.appointment_history = {
-            "gender": None,
+            "product_type": None,
+            "fault_desc": None,
+            "address": None,
+            "phone": None,
             "start_time": None,
-            "duration": None,
-            "project": None,
-            "preference": None,
-            "engineer": None,
             "engineer_name": None
         }
         self.finished = False
@@ -101,8 +97,8 @@ class AppointmentAgent:
             data = self.input_parser.parse_data(ai_content)
             self.finished = self.appointment_processor.update_history_from_data(self.appointment_history, data)
             
-            # 3. 处理与预约无关的请求
-            # 如果正在等待用户确认推荐技师，不要转交给归类机器人
+            # 3. 处理与报修无关的请求
+            # 如果正在等待用户确认推荐的替换工程师，不要转交给客服调度
             if data.get("unrelated", False) and not self.appointment_history.get('awaiting_confirmation'):
                 # 注意：这里不清空预约历史，保留用户已输入的信息
                 # 只设置状态为CLASSIFY，让系统转交给其他机器人处理

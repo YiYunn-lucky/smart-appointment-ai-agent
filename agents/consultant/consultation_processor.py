@@ -44,7 +44,7 @@ class ConsultationProcessor:
             await self._record_consultation_behavior(user_input, knowledge_docs, session_id)
             
         except Exception as e:
-            yield f"[REPLY][咨询机器人]抱歉，处理您的问题时出现了错误：{str(e)}"
+            yield f"[REPLY][售后顾问]抱歉，处理您的问题时出现了错误：{str(e)}"
     
     async def handle_unrelated_request(self, user_input: str, unrelated_callback, shared_state) -> AsyncGenerator[str, None]:
         """处理与咨询无关的请求"""

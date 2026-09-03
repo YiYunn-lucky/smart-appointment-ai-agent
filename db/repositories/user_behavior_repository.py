@@ -34,7 +34,7 @@ class UserBehaviorRepository(BaseUserBehaviorRepository):
             user_id: 用户ID
             action_type: 行为类型
             action_data: 行为数据
-            engineer_id: 技师ID
+            engineer_id: 工程师ID
             session_id: 会话ID
             
         Returns:
@@ -183,7 +183,7 @@ class UserBehaviorRepository(BaseUserBehaviorRepository):
             user_id: 用户ID
             recommendation_type: 推荐类型
             content: 推荐内容
-            engineer_id: 相关技师ID
+            engineer_id: 相关工程师ID
             
         Returns:
             新创建的推荐ID
@@ -241,38 +241,38 @@ class UserBehaviorRepository(BaseUserBehaviorRepository):
     def get_user_statistics(self, user_id: str, days_back: int = 30) -> Dict[str, Any]:
         """
         获取用户统计信息
-        
+
         Args:
             user_id: 用户ID
             days_back: 统计天数
-            
+
         Returns:
             用户统计信息字典
         """
         with self.session_manager.session_scope() as session:
             cutoff_date = datetime.utcnow() - timedelta(days=days_back)
-            
+
             # 总行为数
             total_behaviors = session.query(UserBehavior).filter(
                 UserBehavior.user_id == user_id,
                 UserBehavior.created_at >= cutoff_date
             ).count()
-            
-            # 预约次数
-            appointment_count = session.query(UserBehavior).filter(
+
+            # 报修次数
+            repair_count = session.query(UserBehavior).filter(
                 UserBehavior.user_id == user_id,
-                UserBehavior.action_type == 'appointment',
+                UserBehavior.action_type == 'repair',
                 UserBehavior.created_at >= cutoff_date
             ).count()
-            
+
             # 咨询次数
             consultation_count = session.query(UserBehavior).filter(
                 UserBehavior.user_id == user_id,
                 UserBehavior.action_type == 'consultation',
                 UserBehavior.created_at >= cutoff_date
             ).count()
-            
-            # 最喜欢的技师
+
+            # 最喜欢的工程师
             from sqlalchemy import func
             favorite_engineer = session.query(
                 UserBehavior.engineer_id,
@@ -280,62 +280,62 @@ class UserBehaviorRepository(BaseUserBehaviorRepository):
                 func.count(UserBehavior.engineer_id).label('count')
             ).join(Engineer).filter(
                 UserBehavior.user_id == user_id,
-                UserBehavior.action_type == 'appointment',
+                UserBehavior.action_type == 'repair',
                 UserBehavior.created_at >= cutoff_date
             ).group_by(UserBehavior.engineer_id, Engineer.name).order_by(
                 func.count(UserBehavior.engineer_id).desc()
             ).first()
-            
-            # 最后一次访问
-            last_visit = session.query(UserBehavior).filter(
+
+            # 最后一次报修
+            last_repair = session.query(UserBehavior).filter(
                 UserBehavior.user_id == user_id,
-                UserBehavior.action_type == 'appointment'
+                UserBehavior.action_type == 'repair'
             ).order_by(UserBehavior.created_at.desc()).first()
-            
+
             return {
                 'total_behaviors': total_behaviors,
-                'appointment_count': appointment_count,
+                'repair_count': repair_count,
                 'consultation_count': consultation_count,
                 'favorite_engineer_id': favorite_engineer[0] if favorite_engineer else None,
                 'favorite_engineer_name': favorite_engineer[1] if favorite_engineer else None,
                 'favorite_engineer_visits': favorite_engineer[2] if favorite_engineer else 0,
-                'last_visit_date': last_visit.created_at if last_visit else None,
-                'days_since_last_visit': (datetime.utcnow() - last_visit.created_at).days if last_visit else None,
+                'last_repair_date': last_repair.created_at if last_repair else None,
+                'days_since_last_repair': (datetime.utcnow() - last_repair.created_at).days if last_repair else None,
                 'period_days': days_back
             }
 
     def get_engineer_popularity(self, days_back: int = 30) -> List[Dict[str, Any]]:
         """
-        获取技师受欢迎程度统计
-        
+        获取工程师服务量统计（按报修单量排名）
+
         Args:
             days_back: 统计天数
-            
+
         Returns:
-            技师受欢迎程度列表
+            工程师服务量列表
         """
         with self.session_manager.session_scope() as session:
             cutoff_date = datetime.utcnow() - timedelta(days=days_back)
-            
+
             from sqlalchemy import func
-            
+
             popularity = session.query(
                 UserBehavior.engineer_id,
                 Engineer.name,
-                func.count(UserBehavior.engineer_id).label('appointment_count'),
+                func.count(UserBehavior.engineer_id).label('repair_count'),
                 func.count(func.distinct(UserBehavior.user_id)).label('unique_users')
             ).join(Engineer).filter(
-                UserBehavior.action_type == 'appointment',
+                UserBehavior.action_type == 'repair',
                 UserBehavior.created_at >= cutoff_date
             ).group_by(UserBehavior.engineer_id, Engineer.name).order_by(
                 func.count(UserBehavior.engineer_id).desc()
             ).all()
-            
+
             return [
                 {
                     'engineer_id': p[0],
                     'engineer_name': p[1],
-                    'appointment_count': p[2],
+                    'repair_count': p[2],
                     'unique_users': p[3]
                 }
                 for p in popularity

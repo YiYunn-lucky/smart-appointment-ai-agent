@@ -33,16 +33,16 @@ class ResponseGenerator:
             content = response.content
             
             # 只在开头添加一次REPLY标签，然后逐字符输出
-            yield "[REPLY][咨询机器人]"
+            yield "[REPLY][售后顾问]"
             for char in content:
                 yield char
-                
+
         except Exception as e:
             error_msg = f"抱歉，处理您的问题时出现了错误：{str(e)}"
-            yield "[REPLY][咨询机器人]"
+            yield "[REPLY][售后顾问]"
             for char in error_msg:
                 yield char
-    
+
     def create_unrelated_message(self) -> str:
         """创建与咨询无关的回复消息"""
-        return "[THOUGHT][咨询机器人] 咨询机器人：这个问题不是咨询类问题，我将转回给归类机器人处理。"
+        return "[THOUGHT][售后顾问] 售后顾问：这个问题不是咨询类问题，我将转回给客服调度处理。"
