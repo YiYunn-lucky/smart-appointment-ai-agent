@@ -39,10 +39,14 @@ class PromptBuilder:
             "用户输入：{user_input}"
         )
     
-    def build_consultation_prompt(self, user_input: str, knowledge_docs: List[Dict[str, Any]]) -> str:
-        """构建咨询提示词"""
+    def build_consultation_prompt(self, user_input: str, knowledge_docs: List[Dict[str, Any]],
+                                  background: str = "") -> str:
+        """构建咨询提示词；background 提供客户档案/历史要点时注入（缺省不影响原调用）"""
         context = self._build_knowledge_context(knowledge_docs)
-        return f"{self.system_prompt}\n\n{context}\n用户问题：{user_input}\n\n请回答用户的问题。"
+        bg_section = (f"\n\n客户背景信息（供个性化参考，回答时可自然提及，不必复述整段）：\n{background}"
+                      if background else "")
+        return (f"{self.system_prompt}{bg_section}\n\n{context}"
+                f"\n用户问题：{user_input}\n\n请回答用户的问题。")
     
     def build_classification_prompt(self, user_input: str) -> str:
         """构建分类提示词"""

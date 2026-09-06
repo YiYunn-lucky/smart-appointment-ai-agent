@@ -6,6 +6,8 @@ from .repositories import (
     TicketRepository,
     OrderRepository,
     HumanHandoverRepository,
+    ChatSessionRepository,
+    UserMemoryRepository,
 )
 from typing import Optional
 
@@ -36,6 +38,18 @@ class DatabaseRouter:
         self.ticket_repo = TicketRepository(self.session_manager)
         self.order_repo = OrderRepository(self.session_manager)
         self.handover_repo = HumanHandoverRepository(self.session_manager)
+        self.chat_session_repo = ChatSessionRepository(self.session_manager)
+        self.user_memory_repo = UserMemoryRepository(self.session_manager)
+
+    @property
+    def chat_sessions(self) -> ChatSessionRepository:
+        """获取聊天会话数据仓库"""
+        return self.chat_session_repo
+
+    @property
+    def user_memories(self) -> UserMemoryRepository:
+        """获取用户长期记忆数据仓库"""
+        return self.user_memory_repo
 
     @property
     def engineers(self) -> EngineerRepository:

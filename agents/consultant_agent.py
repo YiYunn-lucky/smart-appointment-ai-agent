@@ -23,6 +23,8 @@ class ConsultantAgent:
         self.session_id = session_id or str(uuid.uuid4())
         self.shared_state = None
         self.unrelated_callback = None
+        # 会话上下文（由 AgentSessionRegistry 挂载；非空时注入客户背景并沉淀长期记忆）
+        self.session_context = None
         
         # 初始化LLM
         self.llm = self._initialize_llm()
@@ -70,22 +72,27 @@ class ConsultantAgent:
     async def consult_stream(self, user_input: str):
         """
         流式输出咨询结果
-        
+
         这是主要的咨询入口点，协调各个组件完成咨询流程
         """
+        # 会话上下文：客户背景（滚动摘要+召回 Top-5）注入生成提示，咨询后沉淀长期记忆
+        ctx = self.session_context
+        background = ctx.background_text(getattr(ctx, 'recalled', None)) if ctx is not None else ""
+
         # 0. 工单进度/订单保修等查询意图先查库答复：命中即结束，
         #    避免"查询报修单进度"等请求在售后顾问二次分类中被误判为无关而转回死循环
         if self.consultation_processor.try_lookup(user_input):
             async for token in self.consultation_processor.process_consultation_stream(
-                user_input, self.session_id
+                user_input, self.session_id, background
             ):
                 yield token
+            self._record_consultation_memory(user_input)
             self._reset_state_after_consultation()
             return
 
         # 1. 检查是否与咨询相关
         is_consultation = await self.consultation_classifier.is_consultation_related(user_input)
-        
+
         if not is_consultation:
             # 2. 处理与咨询无关的请求
             async for token in self.consultation_processor.handle_unrelated_request(
@@ -93,15 +100,32 @@ class ConsultantAgent:
             ):
                 yield token
             return
-        
+
         # 3. 处理咨询相关的请求
         async for token in self.consultation_processor.process_consultation_stream(
-            user_input, self.session_id
+            user_input, self.session_id, background
         ):
             yield token
-        
-        # 4. 重置状态
+
+        # 4. 沉淀长期记忆并重置状态
+        self._record_consultation_memory(user_input)
         self._reset_state_after_consultation()
+
+    def _record_consultation_memory(self, user_input: str):
+        """咨询完成后把问题要点写入长期记忆（仅已绑定客户；失败不影响回复）"""
+        ctx = self.session_context
+        if ctx is None or not ctx.user_id:
+            return
+        try:
+            from services.memory_service import MemoryService
+            MemoryService().add_memory(
+                user_id=ctx.user_id,
+                content=f"咨询：{user_input[:100]}",
+                memory_type='consult',
+                source_session_id=self.session_id,
+            )
+        except Exception as e:
+            print(f"记录咨询长期记忆失败（不影响回复）：{e}")
 
     def _reset_state_after_consultation(self):
         """咨询完成后重置状态"""

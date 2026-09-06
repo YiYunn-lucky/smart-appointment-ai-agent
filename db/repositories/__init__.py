@@ -16,6 +16,8 @@ from .user_behavior_repository import UserBehaviorRepository
 from .ticket_repository import TicketRepository
 from .order_repository import OrderRepository
 from .handover_repository import HumanHandoverRepository
+from .chat_session_repository import ChatSessionRepository
+from .user_memory_repository import UserMemoryRepository
 
 __all__ = [
     'EngineerRepository',
@@ -23,5 +25,7 @@ __all__ = [
     'UserBehaviorRepository',
     'TicketRepository',
     'OrderRepository',
-    'HumanHandoverRepository'
+    'HumanHandoverRepository',
+    'ChatSessionRepository',
+    'UserMemoryRepository'
 ]

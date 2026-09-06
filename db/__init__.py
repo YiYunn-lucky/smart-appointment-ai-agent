@@ -16,11 +16,14 @@ from .repositories import (
     TicketRepository,
     OrderRepository,
     HumanHandoverRepository,
+    ChatSessionRepository,
+    UserMemoryRepository,
 )
 from .base import SessionManager
 from .models import (
     Base, Engineer, EngineerSchedule, RepairTicket, Order, HumanHandover,
-    KnowledgeDocument, UserBehavior, UserPreference, UserRecommendation
+    KnowledgeDocument, UserBehavior, UserPreference, UserRecommendation,
+    ChatSession, UserMemory
 )
 
 __all__ = [
@@ -39,6 +42,8 @@ __all__ = [
     'TicketRepository',
     'OrderRepository',
     'HumanHandoverRepository',
+    'ChatSessionRepository',
+    'UserMemoryRepository',
 
     # 基础设施
     'SessionManager',
@@ -53,5 +58,7 @@ __all__ = [
     'KnowledgeDocument',
     'UserBehavior',
     'UserPreference',
-    'UserRecommendation'
+    'UserRecommendation',
+    'ChatSession',
+    'UserMemory'
 ]

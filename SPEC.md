@@ -24,7 +24,7 @@
 
 ### 1.3 范围外（README 已声明）
 
-登录与多会话隔离（对话为进程级全局单会话，工单/订单按**手机号**归属客户）、真实支付、真实外呼/短信。
+登录体系（会话按 `session_id` 隔离、客户身份以消息内手机号绑定为准，工单/订单按**手机号**归属客户）、真实支付、真实外呼/短信。
 
 ### 1.4 技术栈
 
@@ -103,7 +103,7 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `task_classification/agent_router.py` | `AgentRouter` | route_to_appointment/consultation/**complaint**/route_by_state、转人工落库回执 |
 | `task_classification/classification_processor.py` | `ClassificationProcessor` | 编排：`_classify_rounds` 上限 >3 强制重置；同步/流式双通道 |
 | `task_classification/unrelated_handler.py` | `UnrelatedHandler` | 子 Agent 判无关 → 转回主调度重分类（带轮次上限） |
-| `appointment_agent.py` | `AppointmentAgent` | 报修流程控制，会话历史（模块单例） |
+| `appointment_agent.py` | `AppointmentAgent` | 报修流程控制；挂载会话上下文后槽位/窗口由 ctx 提供（无上下文时保持模块内历史，向后兼容） |
 | `appointment/input_parser.py` | `InputParser` | LLM 流式输出**纯 JSON 契约**（§5.2），JSONDecodeError 降级字典 |
 | `appointment/appointment_processor.py` | `AppointmentProcessor` | 历史合并、确认流处理、完整/不完整分派、成功建单流程 |
 | `appointment/engineer_finder.py` | `EngineerFinder` | 匹配：指定工程师档期 / 相似替代推荐 / 技能+区域排序 |
@@ -112,8 +112,11 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `consultant/consultation_processor.py` | `ConsultationProcessor` | `try_lookup` 纯函数查库模板（§5.4）；RAG 流程；无关转交 |
 | `consultant/consultation_classifier.py` | `ConsultationClassifier` | 咨询域判定（YES/NO） |
 | `consultant/knowledge_retriever.py` | `KnowledgeRetriever` | FAISS IndexFlatIP 检索封装 |
-| `consultant/response_generator.py` | `ResponseGenerator` | 知识上下文 + LLM 流式生成 |
-| `consultant/prompt_builder.py` | prompt | 客服话术与兜底（400 热线/工单号引导） |
+| `consultant/response_generator.py` | `ResponseGenerator` | 知识上下文 + LLM 流式生成（透传可选 `background`） |
+| `consultant/prompt_builder.py` | prompt | 客服话术与兜底（400 热线/工单号引导）；`build_consultation_prompt(…, background="")` 注入客户背景 |
+| `session/session_context.py` | `SessionContext` | 单会话状态束：客户绑定/预约槽位/窗口轮次/滚动摘要；to/from_row 序列化 |
+| `session/session_window.py` | `should_roll / roll_oldest / fallback_summary / extract_reply_text` | 短期窗口纯函数：10 轮容量、60% 水位滚动、摘要降级、令牌流回复提取 |
+| `session/agent_session_registry.py` | `AgentSessionRegistry / SessionRuntime` | 每会话惰性建 Agent 图 + LRU(8) + per-session 锁 + 快照写穿与按行还原 |
 | `user_behavior_agent.py` | `UserBehaviorAgent` | 行为记录、档案分析、回访消息（含可约时段） |
 | `user_behavior/behavior_recorder.py` | `BehaviorRecorder` | 行为入库（repair/consultation）、统计、清理 |
 | `user_behavior/preference_manager.py` | `PreferenceManager` | 四类偏好更新（`engineer_id/time_period/product_type/fault_type`） |
@@ -130,21 +133,23 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `knowledge_service.py` | 默认 12 条知识、CRUD、FAISS 索引构建/重建、检索（top_k、分类过滤） |
 | `recommendation_service.py` | 后台定时任务：保修 30 天内到期提醒 + 维修完成满意度回访，写 `user_recommendations` |
 | `user_behavior_service.py` | 行为/偏好/推荐的仓库转发与统计 |
+| `chat_session_service.py` | 会话快照读/写/绑定：`ChatSessionService(db_path)`（upsert 全量覆盖、load、bind_user、list_sessions） |
+| `memory_service.py` | 长期记忆读写与召回：`add_memory`（同用户同内容去重）、`recall(query, top_k=5)`（0.6 语义+0.3 时效+0.1 重要度，embedding 不可用自动降级）、`extract_phone`、`maybe_bind_session` |
 | `text_embedding.py` | `embed_input`、`find_best_match_indices(query, candidates)`（IndexFlatL2 排序下标）；工程师向量缓存 `data/engineer_embeddings.pkl` |
 
 **DB 层**
 
 | 文件 | 内容 |
 | --- | --- |
-| `models.py` | 9 张表（§7） |
-| `db_router.py` | `DatabaseRouter`（属性 `engineers/knowledge/user_behavior/tickets/orders/handovers`，内部 `session_manager`）；另含 Engineer/Knowledge/UserBehaviorDBRouter 兼容类 |
-| `repositories/` | engineer / ticket / order / handover / knowledge / user_behavior 六个仓储 |
-| `base/interfaces.py` | 7 个抽象基类：BaseEngineer / BaseSchedule / BaseRepairTicket / BaseOrder / BaseHumanHandover / BaseKnowledge / BaseUserBehaviorRepository |
+| `models.py` | 11 张表（§7） |
+| `db_router.py` | `DatabaseRouter`（属性 `engineers/knowledge/user_behavior/tickets/orders/handovers/chat_sessions/user_memories`，内部 `session_manager`）；另含 Engineer/Knowledge/UserBehaviorDBRouter 兼容类 |
+| `repositories/` | engineer / ticket / order / handover / knowledge / user_behavior / chat_session / user_memory 八个仓储 |
+| `base/interfaces.py` | 9 个抽象基类：BaseEngineer / BaseSchedule / BaseRepairTicket / BaseOrder / BaseHumanHandover / BaseKnowledge / BaseUserBehavior / BaseChatSession / BaseUserMemoryRepository |
 | `base/session_manager.py` | `SessionManager(db_path)` 构造即 `create_all` + 会话工厂；**删库文件 = 零迁移重置** |
 
 **Config 层**：`constants.py`（`StateEnum` + `SharedState`）、`database.py`（`DatabaseConfig`，env `DATABASE_URL/DB_ECHO/...`）、`model_provider.py`（`create_chat_model/create_embedding_model`，env `LLM_*`/`EMBEDDING_*`，支持 openai/qwen/deepseek/zhipu/azure/openai-compatible）、`settings.py`、`time_config.py`（§6.6 唯一时间事实源）。
 
-**Web 层**：`web/routes.py` + `templates/`（index / tickets / engineers / engineer_schedules / knowledge_management / follow_ups）+ `static/styles.css`。`api/chat_handler.py` 持有**全局单例 `task_agent`**（含各子 Agent 与状态机，进程重启即重置）。
+**Web 层**：`web/routes.py` + `templates/`（index / tickets / engineers / engineer_schedules / knowledge_management / follow_ups）+ `static/styles.css`。`api/chat_handler.py` 经 `AgentSessionRegistry` 按 `session_id` 取/建会话运行时（每会话独立 Agent 图 + `SessionContext`），处理期持 per-session 锁，结束时写穿 `chat_sessions`（详见 §4.1）；前端用 `localStorage` 固定 `session_id`。
 
 ---
 
@@ -175,7 +180,8 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 - 合法迁移 `can_transition_to`：CLASSIFY → {APPOINTMENT, CONSULT}；APPOINTMENT/CONSULT → {CLASSIFY}；`force_reset()` 供递归兜底；
 - **转回重分类上限**：`ClassificationProcessor._classify_rounds`，子 Agent 判无关交回主调度时 +1，>3 则清零并强制 reset 后走 other 兜底（防递归死循环）；
 - **投诉**在调度层单轮完成（§5.6），**不新增状态枚举**；
-- 对话为**进程级全局单会话**：子 Agent 历史与状态随 `api/chat_handler.task_agent` 单例驻留内存，重启即清空。
+- **会话化（按 session_id 隔离）**：`api/chat_handler.ProcessUserInput_stream` 经 `AgentSessionRegistry.get(session_id)` 取/建 `SessionRuntime`（每会话独立 Agent 图 + `SessionContext`，进程内 LRU 上限 8）；同会话并发请求以 per-session `asyncio.Lock` 串行；每轮结束把（状态机值/客户绑定/槽位/窗口/摘要）写穿 `chat_sessions` 行 → **页面刷新、LRU 淘汰、进程重启均按行还原**，多会话互不串场；
+- **客户绑定**：消息中出现 11 位手机号（或续接上轮槽位内手机号）即绑定 `ctx.user_id`，绑定客户的本轮消息先做长期记忆召回（Top-5）注入子 Agent 背景；报修成功/咨询完成沉淀新记忆。
 
 ### 4.2 令牌协议（SSE 纯文本流，前端按行解析）
 
@@ -324,7 +330,7 @@ days_left    = (warranty_end - now).days   # 超保时为 0
 
 ## 7. 数据模型与种子数据
 
-### 7.1 表结构（9 张，db/models.py 逐一对应）
+### 7.1 表结构（11 张，db/models.py 逐一对应）
 
 ```
 engineers ──1:N── engineer_schedules(busy 行 ticket_id ──)──► repair_tickets
@@ -332,6 +338,8 @@ engineers ──1:N── repair_tickets.engineer_id(可空=未派单) ──1:N
 orders（独立，按 user_phone 查询）
 knowledge_documents（独立，FAISS 索引内存构建）
 user_behaviors ──聚合──► user_preferences / user_recommendations（均按 user_id=手机号）
+chat_sessions（会话快照，按 session_id 单行覆盖写）
+user_memories（按 user_id=手机号 的长期记忆流水，软删除）
 ```
 
 | 表 | 字段 | 说明 |
@@ -345,6 +353,8 @@ user_behaviors ──聚合──► user_preferences / user_recommendations（�
 | `user_behaviors` | id, user_id(默认 'guest'；实际为手机号), action_type('repair'/'consultation'), action_data(JSON), engineer_id(FK 可空), session_id(可空), created_at | 行为流水 |
 | `user_preferences` | id, user_id, preference_type('engineer_id'/'time_period'/'product_type'/'fault_type'), preference_value, confidence_score(default 1), last_updated | 置信度累加（6.8） |
 | `user_recommendations` | id, user_id, recommendation_type('warranty_expiry_reminder'/'satisfaction_followup'/'maintenance_advice'), content(Text), engineer_id(FK 可空), is_sent(default 0), created_at, sent_at(可空) | 调度器/回访页产出 |
+| `chat_sessions` | id, session_id(unique,index), user_id(index,可空), state_value, appointment_slots(JSON), message_window(JSON), summary_text(Text), created_at, updated_at | 会话快照单行覆盖写：槽位/窗口/摘要全量 JSON；`user_id` 空 = 未识别客户 |
+| `user_memories` | id, user_id(index), content(Text), memory_type('repair'/'consult'/'preference'), importance(Float,默认0.5), embedding(JSON 向量,可空), source_session_id(可空), created_at, updated_at, is_active(默认1) | 长期记忆：repair 0.8 / preference 0.6 / consult 0.5；软删除；同用户同内容去重 |
 
 ### 7.2 种子数据（启动自动播种，幂等：表非空即跳过；删 `data/` 即重置）
 
@@ -374,8 +384,8 @@ user_behaviors ──聚合──► user_preferences / user_recommendations（�
 | 方法/路径 | 说明 |
 | --- | --- |
 | `GET /` | 智能客服聊天主页 |
-| `POST /chat/stream` | **主聊天端点**：text/event-stream 逐 token 输出（§4.2）；内部 = 校验 → `api/chat_handler` 全局单例 `task_agent` → `process_task_stream` |
-| `POST /chat` | 兼容同步端点（一次性返回） |
+| `POST /chat/stream` | **主聊天端点**：text/event-stream 逐 token 输出（§4.2）；请求体 `ChatRequest{message, session_id?}`；`session_id` 缺省时后端生成并通过响应头 `X-Session-Id` 下发（前端 localStorage 固定复用）；内部 = `ProcessUserInput_stream(message, session_id)`（§4.1） |
+| `POST /chat` | 兼容端点（同 /chat/stream 语义，`session_id` 可空同上） |
 | `GET /tickets` | 报修工单管理页 |
 | `GET /engineers` | 工程师管理页 |
 | `GET /engineer_schedules` | 今日排班网格（9:00–18:00） |
@@ -413,19 +423,21 @@ user_behaviors ──聚合──► user_preferences / user_recommendations（�
 | 指定工程师档期冲突 | 技能相似 + 区域软偏好推荐替代 + 请求确认 | engineer_finder.find_similar_available_engineer |
 | 无任何空闲工程师 | 确定性失败文案（建议改时间/拨打热线） | message_builder failure |
 | 推荐回复无法解析 | 不 reset，提示明确回复“是/不” | appointment_processor awaiting |
-| Embedding 不可用 | 工程师候选保持原顺序；知识无向量跳过检索 | text_embedding / knowledge_service |
+| Embedding 不可用 | 工程师候选保持原顺序；知识无向量跳过检索；记忆语义分置空 → 按归一化 (0.3×时效+0.1×重要度)/0.4 召回 | text_embedding / knowledge_service / memory_scoring |
 | 查询类意图（保修/进度）误判 | 纯函数短路先于一切 LLM 与二次分类 | consultation_processor.try_lookup |
 | 行为记录失败 | 仅日志告警，不影响主流程 | recorder / processor |
 | 回访话术 LLM 失败 | 确定性模板话术（含可约时段） | user_behavior_agent fallback |
 | 派单冲突（后台操作） | 400 + 冲突说明，工单保留 pending 可改派 | api/ticket.py |
 | 非法状态流转 | 服务层白名单拒绝 → API 400 | ticket_service.update_status |
+| 滚动摘要 LLM 失败 | 截断拼接 + 「（早期对话截断）」标记，窗口正常滚动 | session_window.fallback_summary |
+| 会话快照写穿失败 | 仅日志告警，已流出的回复不受影响；下轮成功后整份覆盖 | chat_handler / registry.persist |
 | 前端 SSE 异常令牌 | `[ERROR]` 红色渲染，不吞不静默 | index.html |
 
 ---
 
 ## 10. 测试策略与工程约定
 
-### 10.1 测试设计（59 项全离线，零 API Key 依赖）
+### 10.1 测试设计（107 项全离线，零 API Key 依赖）
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -434,14 +446,20 @@ user_behaviors ──聚合──► user_preferences / user_recommendations（�
 | `test_consultant_agent.py` | 工单号/保修查询模板答复（含纯数字单号容错） |
 | `test_offline_services.py` | 工单全生命周期（合法/非法流转、完成与取消均释放忙档）、档期冲突与换派、保修 364/366 天边界、演示订单幂等播种、工程师种子覆盖（8 人/6 品类）、转人工记录 |
 | `test_user_behavior_agent.py` | 行为记录与偏好置信度、常用偏好识别、30 天回访判定、话术无旧版残留 |
+| `test_memory_recall.py` | 召回打分纯函数：0.6/0.3/0.1 权重、30 天时效衰减、无语义分归一化、Top-K 排序 |
+| `test_session_window.py` | 窗口纯函数：60% 水位触发滚动、`extract_reply_text` 令牌段提取、摘要降级截断 |
+| `test_session_isolation.py` | 两会话行/ctx 互不串场、状态机值按会话还原、LRU 淘汰后按行重建、AppointmentAgent 上下文模式 |
+| `test_memory_binding.py` | 手机号提取/会话绑定、默认重要度与去重、软删除、无语义分召回降级（embedding 一律离线禁止） |
+| `test_chat_handler_session.py` | 入口链路：绑定/匿名、多轮窗口写穿、重启还原续谈、交错会话隔离、召回注入 ctx.recalled |
 
-`conftest.py` 夹具：`FakeChatModel`（可 `prompt | llm` 组合的同步替身）、`temp_db_path`（独立临时库）、`tmp_engine`。
+`conftest.py` 夹具：`FakeChatModel`（可 `prompt | llm` 组合的同步替身）、`temp_db_path`（独立临时库）、`tmp_engine`。会话类测试以 `monkeypatch` 将 `chat_handler` 单例指向临时库，并把运行时 Agent 图的分类流替换为假流（不触网）。
 
 ### 10.2 常用命令
 
 ```bash
-pytest                    # 全量 59 项离线
+pytest                    # 全量 107 项离线
 pytest tests/test_offline_services.py -q   # 确定性纯逻辑（状态机/保修/档期）
+pytest tests/test_session_isolation.py tests/test_chat_handler_session.py -q  # 会话隔离/写穿/重启还原
 python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦可演示核心链路）
 ```
 
@@ -451,8 +469,8 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦�
 - **路由顺序敏感**：`/api/engineers/schedules/today`、`/api/tickets/handovers` 必须声明在动态段之前（当前已满足，新增路由注意）；
 - **时间口径**：一律 `TimeConfig.naive_now()`；`parse_datetime` 返回 naive（§6.6）；
 - **删库即重置**：`data/smart_appointment.db` + 索引文件删除后重启即重建全部种子（旧库备份为 `.db.bak`）；
-- **会话**：全局单进程会话，多客户隔离属范围外，工单/订单按手机号归属。
+- **会话**：按 `session_id` 隔离（每会话独立 Agent 图 + 写穿 `chat_sessions`），无登录体系、身份以手机号绑定为准；工单/订单按手机号归属（M12 起，旧"全局单进程会话"描述已废弃）。
 
 ---
 
-*本文档锚点均已对照源码核实（M7 家电化改造后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*
+*本文档锚点均已对照源码核实（M12 分层记忆后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*

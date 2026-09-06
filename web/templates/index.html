@@ -375,6 +375,7 @@
             <div class="header-subtitle">
                 报修登记 · 工程师上门预约 · 保修查询 · 售后咨询（服务时间 9:00 - 18:00）
             </div>
+            <div id="session-badge" style="font-size:12px;opacity:0.85;margin-top:6px;font-family:monospace;"></div>
         </div>
 
         <!-- 导航栏 -->
@@ -459,6 +460,23 @@
     const clearBtn = document.getElementById('clear-btn');
     const typingIndicator = document.getElementById('typing-indicator');
     let lastBotBubble = null;
+
+    // 会话隔离：localStorage 持久化 session_id，刷新/重开页面自动续接同一会话
+    function getOrCreateSessionId() {
+        let sid = localStorage.getItem('chat_session_id');
+        if (!sid) {
+            sid = (window.crypto && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : 's-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10);
+            localStorage.setItem('chat_session_id', sid);
+        }
+        return sid;
+    }
+
+    function showSessionBadge(sid) {
+        const badge = document.getElementById('session-badge');
+        if (badge) badge.textContent = '会话 ' + (sid || '').slice(0, 8) + '…（已自动保存，可刷新继续）';
+    }
 
     // 消息分段与样式关键词（与后端 [THOUGHT]/[REPLY]/[SIGNAL]/[ERROR] 令牌及成功文案保持同步）
     const SUCCESS_KEYWORDS = ['报修已登记成功', '已为您安排', '已登记转人工'];
@@ -590,8 +608,15 @@
             const res = await fetch('/chat/stream', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({message: text})
+                body: JSON.stringify({message: text, session_id: getOrCreateSessionId()})
             });
+
+            // 服务端下发的会话 ID 兜底写入（旧客户端首次请求路径）
+            const serverSid = res.headers.get('X-Session-Id');
+            if (serverSid) {
+                localStorage.setItem('chat_session_id', serverSid);
+                showSessionBadge(serverSid);
+            }
 
             hideTypingIndicator();
 
@@ -638,8 +663,9 @@
         }
     });
 
-    // 页面加载完成后聚焦输入框
+    // 页面加载完成后聚焦输入框并展示会话标识
     window.addEventListener('load', function() {
+        showSessionBadge(getOrCreateSessionId());
         userInput.focus();
     });
     </script>

@@ -272,3 +272,59 @@ class BaseUserBehaviorRepository(ABC):
     def get_user_statistics(self, user_id: str, days_back: int = 30) -> Dict[str, Any]:
         """获取用户统计信息"""
         pass
+
+
+class BaseChatSessionRepository(ABC):
+    """
+    聊天会话数据访问抽象接口
+
+    管理会话级状态快照（状态机值/槽位/短期消息窗口/滚动摘要），供重启与多会话隔离恢复。
+    """
+
+    @abstractmethod
+    def upsert_session(self, session_id: str, state_value: Optional[str] = None,
+                       user_id: Optional[str] = None, appointment_slots: Optional[Dict[str, Any]] = None,
+                       message_window: Optional[List[Dict[str, Any]]] = None,
+                       summary_text: Optional[str] = None) -> bool:
+        """按 session_id 全量覆盖写（会话不存在则新建）"""
+        pass
+
+    @abstractmethod
+    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """按 session_id 读取会话行"""
+        pass
+
+    @abstractmethod
+    def update_session_user(self, session_id: str, user_id: str) -> bool:
+        """绑定会话到客户（手机号）"""
+        pass
+
+    @abstractmethod
+    def list_sessions(self, user_id: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """会话列表（可按客户过滤），时间倒序"""
+        pass
+
+
+class BaseUserMemoryRepository(ABC):
+    """
+    用户长期记忆数据访问抽象接口
+
+    记忆按客户（手机号）隔离，供分层记忆召回使用。
+    """
+
+    @abstractmethod
+    def add_memory(self, user_id: str, content: str, memory_type: str = 'consult',
+                   importance: Optional[float] = None, embedding: Optional[List[float]] = None,
+                   source_session_id: Optional[str] = None) -> int:
+        """新增一条长期记忆"""
+        pass
+
+    @abstractmethod
+    def get_user_memories(self, user_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """获取某客户的全部活跃记忆（可选限量）"""
+        pass
+
+    @abstractmethod
+    def delete_memory(self, memory_id: int, soft_delete: bool = True) -> bool:
+        """删除记忆（软删除）"""
+        pass

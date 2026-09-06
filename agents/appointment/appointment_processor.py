@@ -238,6 +238,22 @@ class AppointmentProcessor:
         except Exception as e:
             print(f"记录报修行为失败（不影响报修成功）：{e}")
 
+        # 2.5 沉淀长期记忆（报修完成，供后续同客户会话召回）
+        try:
+            from services.memory_service import MemoryService
+            MemoryService().add_memory(
+                user_id=appointment_history["phone"],
+                content=(
+                    f"报修：{appointment_history['product_type']}（{appointment_history['fault_desc']}），"
+                    f"地址 {appointment_history['address']}，上门 {start_time.strftime('%Y-%m-%d %H:%M')}，"
+                    f"工程师 {tech['name']}，工单号 {assigned['ticket_no']}"
+                ),
+                memory_type='repair',
+                source_session_id=session_id,
+            )
+        except Exception as e:
+            print(f"记录报修长期记忆失败（不影响报修成功）：{e}")
+
         # 3. 保修状态提示（匹配演示订单）
         warranty_note = self._build_warranty_note(appointment_history["phone"],
                                                   appointment_history["product_type"])

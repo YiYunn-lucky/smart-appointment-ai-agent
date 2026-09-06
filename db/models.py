@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, JSON, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -104,3 +104,28 @@ class UserRecommendation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     sent_at = Column(DateTime, nullable=True)
     engineer = relationship("Engineer")
+
+class ChatSession(Base):
+    __tablename__ = 'chat_sessions'
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String, unique=True, nullable=False, index=True)
+    user_id = Column(String, nullable=True, index=True)  # 绑定的客户手机号（可空：未识别）
+    state_value = Column(String, nullable=True)  # 状态机快照（None=CLASSIFY）
+    appointment_slots = Column(JSON, nullable=True)  # 报修槽位（预约抽取中间态）
+    message_window = Column(JSON, nullable=True)  # 短期记忆：最近 N 轮 [{role, content}]
+    summary_text = Column(Text, nullable=True)  # 滚动摘要（覆盖被滚出的早期轮次）
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class UserMemory(Base):
+    __tablename__ = 'user_memories'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, nullable=False, index=True)  # 客户手机号
+    content = Column(Text, nullable=False)  # 记忆文本（可注入 LLM 上下文）
+    memory_type = Column(String, nullable=False, default='consult')  # 'repair'/'consult'/'preference'
+    importance = Column(Float, nullable=True, default=0.5)  # 重要度（0-1）
+    embedding = Column(JSON, nullable=True)  # 语义向量（Embedding 可用时写入）
+    source_session_id = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    is_active = Column(Integer, default=1)  # 软删除标记

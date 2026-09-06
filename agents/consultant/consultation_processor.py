@@ -50,8 +50,9 @@ class ConsultationProcessor:
 
         return response
 
-    async def process_consultation_stream(self, user_input: str, session_id: str) -> AsyncGenerator[str, None]:
-        """处理流式咨询"""
+    async def process_consultation_stream(self, user_input: str, session_id: str,
+                                          background: str = "") -> AsyncGenerator[str, None]:
+        """处理流式咨询（background 为客户档案/历史要点，RAG 生成时透传）"""
         try:
             # 0. 订单保修/工单进度等查询意图直接查库答复
             lookup_answer = self._try_lookup_answer(user_input)
@@ -66,7 +67,8 @@ class ConsultationProcessor:
             knowledge_docs = await self.knowledge_retriever.search_knowledge(user_input, top_k=3)
 
             # 2. 生成响应
-            async for token in self.response_generator.generate_response_stream(user_input, knowledge_docs):
+            async for token in self.response_generator.generate_response_stream(
+                    user_input, knowledge_docs, background):
                 yield token
 
             # 3. 记录用户行为

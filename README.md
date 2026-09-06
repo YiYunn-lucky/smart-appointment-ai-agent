@@ -11,6 +11,7 @@
 - **工单进度查询**：报修单号（AX…）随时查状态、工程师与上门时间
 - **投诉转人工**：登记诉求并承诺 30 分钟内回电，落库为转人工记录
 - **售后知识问答**：保修政策、收费标准、故障自查等通过知识库 RAG 检索回答
+- **多会话隔离 + 分层记忆**：每会话独立运行时与最近 10 轮短期窗口（互不串场，刷新/重启可续谈）；报修与咨询要点沉淀为长期记忆，老客户再对话按 `0.6 语义 + 0.3 时效 + 0.1 重要度` 召回 Top-5 注入客服背景
 - 服务窗口统一 **9:00–18:00**，默认上门维修窗口 2 小时
 
 面向运营（后台页面）：
@@ -105,6 +106,18 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 后台：/tickets 派单/状态流转 · /engineers 排班 · /follow_ups 回访 · /knowledge 知识库
 ```
 
+## 会话与分层记忆
+
+会话通过 `agents/session/` 的运行时注册表（`AgentSessionRegistry`）管理：
+
+- **每会话一张 Agent 图**：按 `session_id` 惰性构建（客服调度 + 报修专员 + 售后顾问），进程内 LRU 上限 8；同会话并发以 per-session 锁串行，多会话互不串场
+- **单一真相源 `SessionContext`**：客户绑定（手机号）、预约槽位、短期窗口、滚动摘要；每轮结束整份快照写穿 `chat_sessions` 表 → 刷新页面、LRU 淘汰、进程重启均可按行还原（含状态机值）
+- **短期记忆窗口**：一问一答为一轮，容量 10 轮；占用达 60% 时把最旧轮次滚入滚动摘要（LLM 摘要失败自动降级为截断拼接并标记「早期对话截断」），窗口保留近约 6 轮原文
+- **长期记忆**：报修成功 / 咨询完成沉淀为 `user_memories`（类型 repair/consult/preference、重要度 0.8/0.5/0.6、语义向量）；客户再次出现（消息带手机号自动绑定）时按召回分召回 Top-5，注入咨询背景与提示词，实现跨会话「记得老客户」
+- **Web 会话标识**：浏览器 `localStorage` 保存 `session_id`（请求头透传，后端缺省时生成并回传 `X-Session-Id`），无需登录即保持同一会话
+
+召回分 = `0.6 × 语义相似度 + 0.3 × 时效（30 天线性衰减）+ 0.1 × 重要度`；Embedding 不可用时自动降级为 `(0.3×时效 + 0.1×重要度) / 0.4` 归一排序（无 Key 环境可完整运行）。
+
 ## 技术栈
 
 | 类别 | 选型 |
@@ -131,15 +144,16 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 │   ├── appointment/                   #   input_parser / engineer_finder / message_builder / processor
 │   ├── consultant_agent.py            # 售后顾问 Agent
 │   ├── consultant/                    #   knowledge_retriever / consultation_classifier / response_generator / prompt_builder
+│   ├── session/                       # 会话运行时：session_context / session_window / agent_session_registry
 │   └── user_behavior_agent.py + user_behavior/   # 用户行为与回访
-├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior
-├── db/                    # DB 层：models.py / db_router.py / repositories / base（session_manager、interfaces）
+├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior / chat_session / memory（含 memory_scoring）
+├── db/                    # DB 层：models.py / db_router.py / repositories（含 chat_session / user_memory）/ base（session_manager、interfaces）
 ├── config/                # 模型提供方、常量、时区与营业时间
-├── tests/                 # 68 项离线测试
+├── tests/                 # 107 项离线测试
 └── data/                  # SQLite 库与向量索引（运行时生成，已 gitignore）
 ```
 
-## 数据模型（9 张表）
+## 数据模型（11 张表）
 
 | 表 | 说明 |
 |---|---|
@@ -152,6 +166,8 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 | `user_behaviors` | 用户行为流水（报修/咨询，客户=手机号） |
 | `user_preferences` | 偏好与置信度（品类/故障/时段/工程师） |
 | `user_recommendations` | 回访/提醒任务产出 |
+| `chat_sessions` | 会话快照：session_id（唯一）、绑定客户、状态机值、预约槽位/短期窗口（JSON）、滚动摘要 |
+| `user_memories` | 客户长期记忆：类型（repair/consult/preference）、重要度、语义向量（JSON）、来源会话，软删除 |
 
 工单状态机：`pending → assigned → in_progress → completed`，前三态可 → `cancelled`；完成/取消即释放工程师忙档。保修期 = 购买日 + 保修年限（超出判超保，提示付费维修）。
 
@@ -246,11 +262,12 @@ RAG_MCP_CWD=C:/Users/Cloud/Desktop/RAG项目/MODULAR-RAG-MCP-SERVER-main   # RAG
 ## 测试
 
 ```bash
-pytest                    # 68 项全部离线运行，不依赖 LLM/Embedding Key
+pytest                    # 107 项全部离线运行，不依赖 LLM/Embedding Key
 pytest tests/test_offline_services.py -q   # 工单生命周期/保修边界/档期冲突等纯逻辑
+pytest tests/test_session_isolation.py tests/test_chat_handler_session.py -q  # 会话隔离/写穿/重启恢复
 ```
 
-覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）等。
+覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原等。
 
 ## 主要页面
 
@@ -265,14 +282,14 @@ pytest tests/test_offline_services.py -q   # 工单生命周期/保修边界/档
 
 ## 已知边界（演示范围外）
 
-- **单会话**：聊天状态为全局单进程会话，不做登录/多用户隔离；工单与订单按手机号归属客户
+- **无登录体系**：会话按浏览器 `session_id` 隔离，无需登录即可对话；客户身份以消息内手机号绑定为准，工单与订单按手机号归属客户
 - **不接支付**：超保维修费用仅话术提示，不产生真实交易
 - **转人工为登记制**：回执承诺 30 分钟回电，无真实外呼
 - 业务窗口 9:00-18:00 统一在 `config/time_config.py` 配置（唯一事实源）
 
 ## 后续规划
 
-- 会话级状态持久化与多客户隔离；SSE 心跳与断线重连
+- SSE 心跳与断线重连
 - 售后顾问对工程师闲忙态的实时感知与「顺路派单」建议
 - 满意度评价闭环：完成后邀请打分，评价进入行为画像
 - 超保付费维修报价流程与配件库存查询

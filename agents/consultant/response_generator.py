@@ -16,19 +16,21 @@ class ResponseGenerator:
         self.llm = llm
         self.prompt_builder = PromptBuilder()
     
-    async def generate_response(self, user_input: str, knowledge_docs: list) -> str:
+    async def generate_response(self, user_input: str, knowledge_docs: list,
+                                background: str = "") -> str:
         """生成标准响应"""
         try:
-            prompt = self.prompt_builder.build_consultation_prompt(user_input, knowledge_docs)
+            prompt = self.prompt_builder.build_consultation_prompt(user_input, knowledge_docs, background)
             response = await self.llm.ainvoke([{"role": "user", "content": prompt}])
             return response.content
         except Exception as e:
             return f"抱歉，处理您的问题时出现了错误。请稍后再试。"
-    
-    async def generate_response_stream(self, user_input: str, knowledge_docs: list) -> AsyncGenerator[str, None]:
+
+    async def generate_response_stream(self, user_input: str, knowledge_docs: list,
+                                       background: str = "") -> AsyncGenerator[str, None]:
         """生成流式响应"""
         try:
-            prompt = self.prompt_builder.build_consultation_prompt(user_input, knowledge_docs)
+            prompt = self.prompt_builder.build_consultation_prompt(user_input, knowledge_docs, background)
             response = await self.llm.ainvoke([{"role": "user", "content": prompt}])
             content = response.content
             
