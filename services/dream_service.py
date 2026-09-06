@@ -17,7 +17,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -56,18 +56,43 @@ async def _default_profile_llm(user_id: str, profile: Dict[str, Any],
 class DreamService:
     """AutoDream 离线沉淀服务类"""
 
-    def __init__(self, db_path: str = 'sqlite:///data/smart_appointment.db'):
+    def __init__(self, db_path: str = 'sqlite:///data/smart_appointment.db',
+                 audit_logger: Optional[Callable[..., Any]] = None,
+                 audit_actor: str = 'dream_scheduler'):
         self.db_path = db_path
         self.db_router = DatabaseRouter(db_path)
         self.behavior_repo = self.db_router.user_behavior
         self.checkpoint_repo = self.db_router.dream_checkpoints
         self.chat_session_repo = self.db_router.chat_sessions
+        # M15 审计回调：每次实际沉淀（consolidated / error）留痕；跳过与占锁不记录
+        self.audit_logger = audit_logger
+        self.audit_actor = audit_actor
 
         self.is_running = False
         self.scheduler_thread = None
         self._thread_locks: Dict[str, threading.Lock] = {}
         # 画像润色 LLM 通道；置 None 关闭 LLM（离线测试 / 无 Key 环境走模板兜底）
         self.profile_text_llm = _default_profile_llm
+
+    def _audit(self, action: str, resource_id: Optional[str] = None,
+               result: str = 'ok', detail: Optional[str] = None) -> None:
+        """AutoDream 沉淀审计（成功/失败）；审计异常只告警不阻断沉淀"""
+        if self.audit_logger is None:
+            return
+        try:
+            self.audit_logger(
+                actor=self.audit_actor,
+                scene='auto_dream',
+                action=action,
+                resource_type='user_preference',
+                resource_id=resource_id,
+                tool_id=None,
+                risk_tier='write',
+                result=result,
+                detail=detail,
+            )
+        except Exception as e:
+            logger.warning(f"AutoDream 审计失败（不影响沉淀）：{action} {e}")
 
     # ---------- 单客户沉淀 ----------
 
@@ -111,10 +136,21 @@ class DreamService:
                     return {'user_id': user_id, 'status': 'locked'}
 
                 try:
-                    return self._consolidate_locked(user_id, stats)
+                    result = self._consolidate_locked(user_id, stats)
+                    if result.get('status') == 'consolidated':
+                        self._audit(action='consolidate', resource_id=user_id,
+                                    detail=(f"回放 {result.get('events_replayed', 0)} 事件，"
+                                            f"降权 {result.get('decayed_count', 0)} 行，"
+                                            f"画像={result.get('profile_memory')}"))
+                    elif result.get('status') == 'error':
+                        self._audit(action='consolidate', resource_id=user_id, result='error',
+                                    detail=str(result.get('error', ''))[:200])
+                    return result
                 except Exception as e:
                     logger.error(f"AutoDream 沉淀失败：user={user_id}，{e}")
                     self.checkpoint_repo.release_lock(user_id, status='error', error=str(e))
+                    self._audit(action='consolidate', resource_id=user_id, result='error',
+                                detail=str(e)[:200])
                     return {'user_id': user_id, 'status': 'error', 'error': str(e)}
         except Exception as e:
             logger.error(f"AutoDream 资格判定失败：user={user_id}，{e}")

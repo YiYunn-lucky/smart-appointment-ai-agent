@@ -1,6 +1,6 @@
 from dotenv import load_dotenv
 import uuid
-from typing import Any, Dict
+from typing import Any, Callable, Dict, Optional
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import AIMessage, HumanMessage
 from config.model_provider import create_chat_model
@@ -23,13 +23,14 @@ class AppointmentAgent:
     2. 管理会话状态
     3. 协调整个家电报修登记流程
     """
-    
-    def __init__(self, session_id=None, unrelated_callback=None):
+
+    def __init__(self, session_id=None, unrelated_callback=None,
+                 audit_logger: Optional[Callable[..., Any]] = None):
         # 基础设置
         self.session_id = session_id or str(uuid.uuid4())
         self.unrelated_callback = unrelated_callback
         self.state = None
-        
+
         # 初始化LLM：main 通道（话术/推荐文案生成）+ fast 通道（槽位抽取，未配置时回退 main）
         self.llm = self._initialize_llm()
         self.structured_llm = self._initialize_structured_llm()
@@ -42,7 +43,8 @@ class AppointmentAgent:
             self.input_parser,
             self.engineer_finder,
             self.message_builder,
-            self.llm
+            self.llm,
+            audit_logger=audit_logger
         )
         
         # 会话管理

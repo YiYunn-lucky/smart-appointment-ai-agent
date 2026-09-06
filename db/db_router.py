@@ -9,6 +9,7 @@ from .repositories import (
     ChatSessionRepository,
     UserMemoryRepository,
     DreamCheckpointRepository,
+    AuditLogRepository,
 )
 from typing import Optional
 
@@ -42,6 +43,7 @@ class DatabaseRouter:
         self.chat_session_repo = ChatSessionRepository(self.session_manager)
         self.user_memory_repo = UserMemoryRepository(self.session_manager)
         self.dream_checkpoint_repo = DreamCheckpointRepository(self.session_manager)
+        self.audit_log_repo = AuditLogRepository(self.session_manager)
 
     @property
     def chat_sessions(self) -> ChatSessionRepository:
@@ -87,6 +89,11 @@ class DatabaseRouter:
     def handovers(self) -> HumanHandoverRepository:
         """获取转人工记录数据仓库"""
         return self.handover_repo
+
+    @property
+    def audit_logs(self) -> AuditLogRepository:
+        """获取操作审计日志数据仓库（M15）"""
+        return self.audit_log_repo
 
     def close(self):
         """关闭数据库连接"""

@@ -9,25 +9,28 @@
 """
 
 import re
-from typing import Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Callable, Optional
 from .state_manager import StateManager
 
 
 class AgentRouter:
     """智能体路由器 - 根据任务类型路由到对应的处理Agent"""
-    
-    def __init__(self, appointment_agent: Any, consultant_agent: Any, state_manager: StateManager):
+
+    def __init__(self, appointment_agent: Any, consultant_agent: Any, state_manager: StateManager,
+                 audit_logger: Optional[Callable[..., Any]] = None):
         """
         初始化路由器
-        
+
         Args:
             appointment_agent: 预约处理Agent
             consultant_agent: 咨询处理Agent
             state_manager: 状态管理器
+            audit_logger: 审计回调（M15）；投诉/转人工登记自动落审计
         """
         self.appointment_agent = appointment_agent
         self.consultant_agent = consultant_agent
         self.state_manager = state_manager
+        self.audit_logger = audit_logger
         
         # 设置Agent的共享状态
         self._setup_agent_states()
@@ -145,7 +148,7 @@ class AgentRouter:
         phone = phone_match.group(0) if phone_match else None
 
         from services.handover_service import HandoverService
-        HandoverService().create_handover(
+        HandoverService(audit_logger=self.audit_logger, audit_actor='complaint_agent').create_handover(
             issue_summary=issue_summary,
             user_phone=phone,
             ticket_id=ticket_id

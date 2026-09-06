@@ -9,7 +9,7 @@
 """
 
 import re
-from typing import Dict, Any, AsyncGenerator
+from typing import Any, Callable, Dict, Optional, AsyncGenerator
 from .input_parser import InputParser
 from .engineer_finder import EngineerFinder
 from .message_builder import MessageBuilder
@@ -23,11 +23,14 @@ class AppointmentProcessor:
     """报修预约处理器"""
 
     def __init__(self, input_parser: InputParser, engineer_finder: EngineerFinder,
-                 message_builder: MessageBuilder, llm=None):
+                 message_builder: MessageBuilder, llm=None,
+                 audit_logger: Optional[Callable[..., Any]] = None):
         self.input_parser = input_parser
         self.engineer_finder = engineer_finder
         self.message_builder = message_builder
         self.llm = llm
+        # M15 审计回调：报修成功建单自动留痕（缺省不记录）
+        self.audit_logger = audit_logger
 
     # ---------- 字段校验 ----------
 
@@ -199,7 +202,7 @@ class AppointmentProcessor:
 
         # 1. 创建报修工单（pending）并派单（写工程师忙档、置 assigned）
         from services.ticket_service import TicketService
-        ticket_service = TicketService()
+        ticket_service = TicketService(audit_logger=self.audit_logger, audit_actor='repair_agent')
         ticket = ticket_service.create_ticket(
             user_name=None,
             user_phone=appointment_history["phone"],

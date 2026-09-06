@@ -8,7 +8,7 @@
 4. 提供统一的流程入口
 """
 
-from typing import AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 from .task_classifier import TaskClassifier
 from .state_manager import StateManager
 from .agent_router import AgentRouter
@@ -24,7 +24,8 @@ class ClassificationProcessor:
                  state_manager: StateManager,
                  agent_router: AgentRouter,
                  unrelated_handler: UnrelatedHandler,
-                 tool_registry: Optional[SupervisorToolRegistry] = None):
+                 tool_registry: Optional[SupervisorToolRegistry] = None,
+                 audit_logger: Optional[Callable[..., Any]] = None):
         """
         初始化分类流程处理器
 
@@ -34,23 +35,46 @@ class ClassificationProcessor:
             agent_router: 智能体路由器
             unrelated_handler: 无关请求处理器
             tool_registry: 主管工具注册表（缺省默认工具集；工具与分类枚举一一对应）
+            audit_logger: 审计回调（M15）；每次工具选择落一条 scene='supervisor' 审计
         """
         self.task_classifier = task_classifier
         self.state_manager = state_manager
         self.agent_router = agent_router
         self.unrelated_handler = unrelated_handler
         self.tool_registry = tool_registry or SupervisorToolRegistry()
+        self.audit_logger = audit_logger
         # 主管规划复盘：每轮回合记录 (category, tool_id)，供审计与测试断言
         self.plan_log: List[Dict[str, str]] = []
         # 单条消息内"子任务转回再分类"的轮次计数：售后顾问等子任务误判转回时防止无限递归
         self._classify_rounds = 0
 
+    def _audit_tool_select(self, tool: ToolSpec, category: str) -> None:
+        """主管工具选择审计（谁被选中、风险分级、原因），审计失败不影响规划"""
+        if self.audit_logger is None:
+            return
+        try:
+            self.audit_logger(
+                actor='supervisor',
+                scene='supervisor',
+                action='tool_select',
+                resource_type='tool',
+                resource_id=tool.tool_id,
+                tool_id=tool.tool_id,
+                risk_tier=tool.risk_tier,
+                result='ok',
+                detail=f"category={category} 选中{tool.tool_id}",
+            )
+        except Exception as e:
+            # 审计异常静默：主管规划复盘已入内存 plan_log，不阻断路由
+            pass
+
     # ---------- 主管规划：工具选择与执行 ----------
 
     def select_tool(self, category: str) -> ToolSpec:
-        """主管规划：分类结果 → 选定工具（未知类别自动落到兜底工具）"""
+        """主管规划：分类结果 → 选定工具（未知类别自动落到兜底工具），落审计"""
         tool = self.tool_registry.by_category(category)
         self.plan_log.append({"category": category, "tool_id": tool.tool_id})
+        self._audit_tool_select(tool, category)
         return tool
 
     def _invoke_tool(self, tool: ToolSpec, task: str) -> AsyncGenerator[str, None]:

@@ -76,11 +76,14 @@ async def initialize_system():
     except Exception as e:
         logger.error(f"⚠️ 售后提醒调度服务异常: {e}")
 
-    # 启动 AutoDream 离线沉淀调度服务（回放老客户行为，沉淀可召回画像）
+    # 启动 AutoDream 离线沉淀调度服务（回放老客户行为，沉淀可召回画像；沉淀结果落审计）
     try:
         logger.info("🌙 启动 AutoDream 离线沉淀调度服务...")
         from services.dream_service import DreamService
-        dream_service = DreamService()
+        from services.audit_service import AuditService
+
+        audit_logger = AuditService().record
+        dream_service = DreamService(audit_logger=audit_logger, audit_actor='dream_scheduler')
         if dream_service.start_scheduler():
             logger.info("✅ AutoDream 离线沉淀调度服务启动成功")
         else:

@@ -144,3 +144,26 @@ class DreamCheckpoint(Base):
     last_error = Column(Text, nullable=True)  # 最近一次失败原因
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AuditLog(Base):
+    """操作审计日志：全链路写操作可查（M15 权限与安全治理）
+
+    actor：操作者（customer=客户对话 / admin=后台页面 / dream=AutoDream /
+    recommendation=回访调度 / system）；scene：场景域；risk_tier：read/confirm/write；
+    idem_key：后台写接口幂等键（unique，重放请求直接命中返回缓存结果）。
+    """
+    __tablename__ = 'audit_logs'
+    id = Column(Integer, primary_key=True)
+    actor = Column(String, nullable=False, default='system', index=True)
+    scene = Column(String, nullable=False, index=True)
+    action = Column(String, nullable=False)
+    resource_type = Column(String, nullable=True)
+    resource_id = Column(String, nullable=True)
+    tool_id = Column(String, nullable=True)          # 主管选中的工具（dialog 场景）
+    risk_tier = Column(String, nullable=False, default='read')
+    result = Column(String, nullable=False, default='ok')  # ok / error / denied / duplicate
+    detail = Column(Text, nullable=True)             # 结果摘要（幂等回放的缓存体）
+    idem_key = Column(String, nullable=True, unique=True, index=True)
+    ip = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)

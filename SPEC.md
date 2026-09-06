@@ -4,7 +4,7 @@
 | --- | --- |
 | 文档版本 | v2.0（按新大纲重构，与代码逐条核对） |
 | 编写日期 | 2026-09-03 |
-| 适用版本 | 当前 master（M0–M7 家电化改造完成后） |
+| 适用版本 | 当前 master（M15 权限与安全治理完成后） |
 | 系统名称 | 安居家电售后智能客服 + 上门报修预约 Agent |
 | 阅读建议 | README 面向使用者，PROJECT_SUMMARY 面向汇报，本文档面向**开发与讲解**，所有锚点均可在源码中对应 |
 
@@ -34,7 +34,7 @@
 | LLM | LangChain，OpenAI 兼容工厂（`config/model_provider.py`：聊天与 Embedding 可分厂商；聊天模型 main/fast 双通道分级，见 §3.1 模型分级） |
 | 向量 | FAISS：`IndexFlatIP`（知识语义检索）、`IndexFlatL2`（工程师技能相似排序） |
 | 存储 | SQLite 单文件 + SQLAlchemy 2.0（声明式 ORM + Repository 仓储 + 手工注入 db_path） |
-| 测试 | pytest + pytest-asyncio，59 项全离线（零外部 API） |
+| 测试 | pytest + pytest-asyncio，193 项全离线（零外部 API） |
 
 ---
 
@@ -94,7 +94,7 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 
 ### 3.2 模块索引
 
-**入口 `app.py`**：`create_app()` 注册 7 个 API Router（`api/__init__.py: api_routers`）+ Web Router + 2 个异常处理器（`BusinessException → api_exception_handler`、`Exception → general_exception_handler`）；`startup_event → initialize_system()` 四步独立容错初始化（§9）。
+**入口 `app.py`**：`create_app()` 注册 8 个 API Router（`api/__init__.py: api_routers`）+ Web Router + 2 个异常处理器（`BusinessException → api_exception_handler`、`Exception → general_exception_handler`）；`startup_event → initialize_system()` 四步独立容错初始化（§9）；AutoDream 调度装配 `AuditService().record` 回调（沉淀落审计，M15）。
 
 **Agents 层（核心）**
 
@@ -103,11 +103,11 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `task_classification_agent.py` | `TaskClassificationAgent` | 总控：初始化 LLM、StateManager、各子 Agent |
 | `task_classification/task_classifier.py` | `TaskClassifier.VALID_CATEGORIES` | LLM 分类，枚举 `appointment/query/complaint/other`，异常→other |
 | `task_classification/state_manager.py` | `StateManager` | 三态（+OTHER）持有与合法迁移、reset/force_reset |
-| `task_classification/agent_router.py` | `AgentRouter` | route_to_appointment/consultation/**complaint**/route_by_state、转人工落库回执 |
-| `task_classification/classification_processor.py` | `ClassificationProcessor` | 主管编排：分类 → `select_tool` 选工具（plan_log 复盘）→ `_invoke_tool` 执行；`_classify_rounds` 上限 >3 强制重置；同步/流式双通道 |
+| `task_classification/agent_router.py` | `AgentRouter` | route_to_appointment/consultation/**complaint**/route_by_state、转人工落库回执；构造可选 `audit_logger`（M15，投诉登记自动审计） |
+| `task_classification/classification_processor.py` | `ClassificationProcessor` | 主管编排：分类 → `select_tool` 选工具（plan_log 复盘 + M15 审计 tool_select）→ `_invoke_tool` 执行；`_classify_rounds` 上限 >3 强制重置；同步/流式双通道 |
 | `task_classification/unrelated_handler.py` | `UnrelatedHandler` | 子 Agent 判无关 → 转回主调度重分类（带轮次上限） |
 | `supervisor/tool_registry.py` | `SupervisorToolRegistry` / `ToolSpec` | 主管工具注册表：类别↔工具一一映射、未知类别兜底、清单注入分类 prompt、risk_tier/model_tier 元数据 |
-| `appointment_agent.py` | `AppointmentAgent` | 报修流程控制；挂载会话上下文后槽位/窗口由 ctx 提供（无上下文时保持模块内历史，向后兼容） |
+| `appointment_agent.py` | `AppointmentAgent` | 报修流程控制；挂载会话上下文后槽位/窗口由 ctx 提供（无上下文时保持模块内历史，向后兼容）；构造可选 `audit_logger`（M15，透传处理器） |
 | `appointment/input_parser.py` | `InputParser` | LLM 流式输出**纯 JSON 契约**（§5.2），JSONDecodeError 降级字典 |
 | `appointment/appointment_processor.py` | `AppointmentProcessor` | 历史合并、确认流处理、完整/不完整分派、成功建单流程 |
 | `appointment/engineer_finder.py` | `EngineerFinder` | 匹配：指定工程师档期 / 相似替代推荐 / 技能+区域排序 |
@@ -120,7 +120,7 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `consultant/prompt_builder.py` | prompt | 客服话术与兜底（400 热线/工单号引导）；`build_consultation_prompt(…, background="")` 注入客户背景 |
 | `session/session_context.py` | `SessionContext` | 单会话状态束：客户绑定/预约槽位/窗口轮次/滚动摘要；to/from_row 序列化 |
 | `session/session_window.py` | `should_roll / roll_oldest / fallback_summary / extract_reply_text` | 短期窗口纯函数：10 轮容量、60% 水位滚动、摘要降级、令牌流回复提取 |
-| `session/agent_session_registry.py` | `AgentSessionRegistry / SessionRuntime` | 每会话惰性建 Agent 图 + LRU(8) + per-session 锁 + 快照写穿与按行还原 |
+| `session/agent_session_registry.py` | `AgentSessionRegistry / SessionRuntime` | 每会话惰性建 Agent 图 + LRU(8) + per-session 锁 + 快照写穿与按行还原；构建整图时装配进程级审计回调（M15：`AuditService(self._db_path).record`，失败仅告警） |
 | `user_behavior_agent.py` | `UserBehaviorAgent` | 行为记录、档案分析、回访消息（含可约时段） |
 | `user_behavior/behavior_recorder.py` | `BehaviorRecorder` | 行为入库（repair/consultation）、统计、清理 |
 | `user_behavior/preference_manager.py` | `PreferenceManager` | 四类偏好更新（`engineer_id/time_period/product_type/fault_type`） |
@@ -138,6 +138,8 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `recommendation_service.py` | 后台定时任务：保修 30 天内到期提醒 + 维修完成满意度回访，写 `user_recommendations` |
 | `dream_service.py` | AutoDream 沉淀：资格扫描 → 增量回放 → 置信度/降权 → profile 记忆 → checkpoint 落库；守护线程定时 + `run_immediate_check` 手动触发（风格同 recommendation） |
 | `dream_policy.py` | AutoDream 纯策略函数：`activity_stats/is_eligible/replay_events/aggregate_profile/preference_upsert_deltas/stale_downweight_rows/build_profile_text`（离线可测） |
+| `audit_service.py` | 操作审计（M15）：`record(...)` 成功/失败双路径落库——失败结果**不占用幂等键**（键文本并入 detail 可追溯）、成功占唯一索引；`find_replay`（仅成功记录重放短路）、`list_logs`（scene/action/risk_tier/result 过滤 + limit）；审计自身失败仅告警不阻断业务 |
+| `permission_policy.py` | 风险分级纯函数（M15）：三档 `RISK_TIERS = [read, confirm, write]` 全序、HTTP 方法分级、工具风险表 `TOOL_RISK_TABLE`（Services 不依赖 Agents，本表为白名单**唯一字面量源**，tests 强制与主管工具注册表同源防漂移）、白名单外工具保守 write 且拒绝直通 |
 | `user_behavior_service.py` | 行为/偏好/推荐的仓库转发与统计 |
 | `chat_session_service.py` | 会话快照读/写/绑定：`ChatSessionService(db_path)`（upsert 全量覆盖、load、bind_user、list_sessions） |
 | `memory_service.py` | 长期记忆读写与召回：`add_memory`（同用户同内容去重）、`recall(query, top_k=5)`（0.6 语义+0.3 时效+0.1 重要度，embedding 不可用自动降级）、`extract_phone`、`maybe_bind_session`、`upsert_profile_memory`（画像记忆：内容一致或余弦 ≥0.92 视为重复跳过，否则软删旧画像后写入，至多一条活跃 profile） |
@@ -147,15 +149,15 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 
 | 文件 | 内容 |
 | --- | --- |
-| `models.py` | 12 张表（§7） |
-| `db_router.py` | `DatabaseRouter`（属性 `engineers/knowledge/user_behavior/tickets/orders/handovers/chat_sessions/user_memories/dream_checkpoints`，内部 `session_manager`）；另含 Engineer/Knowledge/UserBehaviorDBRouter 兼容类 |
-| `repositories/` | engineer / ticket / order / handover / knowledge / user_behavior / chat_session / user_memory / dream_checkpoint 九个仓储 |
-| `base/interfaces.py` | 10 个抽象基类：BaseEngineer / BaseSchedule / BaseRepairTicket / BaseOrder / BaseHumanHandover / BaseKnowledge / BaseUserBehavior / BaseChatSession / BaseUserMemory / BaseDreamCheckpointRepository |
+| `models.py` | 13 张表（§7，M15 增 audit_logs） |
+| `db_router.py` | `DatabaseRouter`（属性 `engineers/knowledge/user_behavior/tickets/orders/handovers/chat_sessions/user_memories/dream_checkpoints/audit_logs`，内部 `session_manager`）；另含 Engineer/Knowledge/UserBehaviorDBRouter 兼容类 |
+| `repositories/` | engineer / ticket / order / handover / knowledge / user_behavior / chat_session / user_memory / dream_checkpoint / audit_log 十个仓储 |
+| `base/interfaces.py` | 11 个抽象基类：BaseEngineer / BaseSchedule / BaseRepairTicket / BaseOrder / BaseHumanHandover / BaseKnowledge / BaseUserBehavior / BaseChatSession / BaseUserMemory / BaseDreamCheckpoint / BaseAuditLogRepository |
 | `base/session_manager.py` | `SessionManager(db_path)` 构造即 `create_all` + 会话工厂；**删库文件 = 零迁移重置** |
 
 **Config 层**：`constants.py`（`StateEnum` + `SharedState`）、`database.py`（`DatabaseConfig`，env `DATABASE_URL/DB_ECHO/...`）、`model_provider.py`（`create_chat_model(temperature, tier)/create_embedding_model`，env `LLM_*`/`EMBEDDING_*`，支持 openai/qwen/deepseek/zhipu/azure/openai-compatible；**模型分级（M14）**：`tier ∈ main/fast`——fast 通道读 `LLM_FAST_MODEL`/`MODEL_FAST_PROVIDER`（Azure 为 `AZURE_FAST_DEPLOYMENT`），未配置透明回退 main 配置；`resolve_channel/channel_label` 纯函数供解析与日志）、`settings.py`、`time_config.py`（§6.6 唯一时间事实源）。
 
-**Web 层**：`web/routes.py` + `templates/`（index / tickets / engineers / engineer_schedules / knowledge_management / follow_ups）+ `static/styles.css`。`api/chat_handler.py` 经 `AgentSessionRegistry` 按 `session_id` 取/建会话运行时（每会话独立 Agent 图 + `SessionContext`），处理期持 per-session 锁，结束时写穿 `chat_sessions`（详见 §4.1）；前端用 `localStorage` 固定 `session_id`。
+**Web 层**：`web/routes.py` + `templates/`（index / tickets / engineers / engineer_schedules / knowledge_management / follow_ups / audit_logs）+ `static/styles.css`。`api/chat_handler.py` 经 `AgentSessionRegistry` 按 `session_id` 取/建会话运行时（每会话独立 Agent 图 + `SessionContext`），处理期持 per-session 锁，结束时写穿 `chat_sessions`（详见 §4.1）；前端用 `localStorage` 固定 `session_id`。
 
 ---
 
@@ -350,7 +352,7 @@ days_left    = (warranty_end - now).days   # 超保时为 0
 
 ## 7. 数据模型与种子数据
 
-### 7.1 表结构（12 张，db/models.py 逐一对应）
+### 7.1 表结构（13 张，db/models.py 逐一对应）
 
 ```
 engineers ──1:N── engineer_schedules(busy 行 ticket_id ──)──► repair_tickets
@@ -361,6 +363,7 @@ user_behaviors ──聚合──► user_preferences / user_recommendations（�
 chat_sessions（会话快照，按 session_id 单行覆盖写）
 user_memories（按 user_id=手机号 的长期记忆流水，软删除）
 dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
+audit_logs（操作审计流水：后台写面统一落库 + 幂等键治理）
 ```
 
 | 表 | 字段 | 说明 |
@@ -377,6 +380,7 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 | `chat_sessions` | id, session_id(unique,index), user_id(index,可空), state_value, appointment_slots(JSON), message_window(JSON), summary_text(Text), created_at, updated_at | 会话快照单行覆盖写：槽位/窗口/摘要全量 JSON；`user_id` 空 = 未识别客户 |
 | `user_memories` | id, user_id(index), content(Text), memory_type('repair'/'consult'/'preference'/'profile'), importance(Float,默认0.5), embedding(JSON 向量,可空), source_session_id(可空), created_at, updated_at, is_active(默认1) | 长期记忆：repair 0.8 / preference 0.6 / consult 0.5 / profile 0.7；软删除；同用户同内容去重；profile 每人至多一条活跃（M13 轮换） |
 | `dream_checkpoints` | id, user_id(unique,index), last_event_id(default 0), run_count, total_events_processed, is_running(默认0), running_started_at(可空), last_run_at(可空), last_status(可空), last_error(Text,可空), created_at, updated_at | AutoDream 每人一行：回放断点（幂等）+ 任务锁（超 30 分钟接管） |
+| `audit_logs` | id, actor, scene, action, resource_type(可空), resource_id(可空), tool_id(可空), risk_tier(默认'read'), result(默认'ok'), detail(Text,可空), idem_key(unique,可空), ip(可空), created_at | 操作审计：写面统一 record（scene=业务域/actor=触发者/风险档位/结果/IP）；**成功记录占用 idem_key 唯一索引**（同键重放短路），失败记录不占键（键并入 detail 可追溯重试）；成功与异常双路径均落库 |
 
 ### 7.2 种子数据（启动自动播种，幂等：表非空即跳过；删 `data/` 即重置）
 
@@ -413,8 +417,9 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 | `GET /engineer_schedules` | 今日排班网格（9:00–18:00） |
 | `GET /knowledge` | 知识库管理页 |
 | `GET /follow_ups` | 售后回访页 |
+| `GET /audit_logs` | 操作审计查询页（scene/风险/结果筛选，fetch `/api/audit_logs`） |
 
-### 8.2 API 层（注册于 app.py：7 个 Router，见 api/__init__.py）
+### 8.2 API 层（注册于 app.py：8 个 Router，见 api/__init__.py）
 
 | Router / Prefix | 端点 | 契约要点 |
 | --- | --- | --- |
@@ -425,8 +430,16 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 | engineer `/api/engineers` | `GET ""` 全部；`GET /schedules/today`；`GET /{engineer_id}`；`GET /{engineer_id}/schedule` | EngineerResponse{id,name,skills,service_region}；ScheduleResponse{id,engineer_id,start_time,end_time,status,ticket_id?}；**静态段 `/schedules/today` 必须先于动态段 `/{engineer_id}` 声明**（已满足） |
 | ticket `/api/tickets` | `GET ""`（按 status/phone 过滤）；`POST ""` 创建；`GET /handovers`；`GET /{ticket_id}`；`POST /{ticket_id}/assign`；`POST /{ticket_id}/status` | 创建 TicketCreate{user_name?, user_phone, product_type, fault_desc, address, start_time, end_time?, engineer_id?}（带 engineer_id 立即尝试派单，冲突 400 保留 pending）；assign/status 返回 OperationResult{status, message, data?}，非法流转 400；**`/handovers` 必须先于 `/{ticket_id}` 声明**（已满足） |
 | follow_ups `/api/follow_ups` | `GET /stats`；`POST /analysis`；`POST /reminder` | analysis `{phone}` → 档案摘要（偏好/工单统计/应回访）；reminder `{phone}` → `ReminderResponse{phone, message, engineer_available_times:[AvailableSlot{date,time,formatted}]}`（engineer 与槽位结构同 user_behavior_agent 输出，历史 bug 已修）；stats → 运营计数 |
+| audit `/api/audit_logs` | `GET ""`（只读） | 审计查询：`scene/action/risk_tier/result` 过滤 + `limit`（默认 200）→ `{status, total, logs[]}`；写面统一走 `api/audit_guard.py`：请求头 `Idempotency-Key` 取键（缺省 uuid4）→ 业务前 `find_replay` 命中成功记录即 200 + `X-Replay: true` 短路 → 成功带键落 `result=ok` → 异常落 `result=error`（§8.3） |
 
-### 8.3 兼容遗留端点说明（如实披露）
+### 8.3 权限与安全治理（M15：写面统一审计 + 幂等 + 风险分级）
+
+- **风险分级策略**（`services/permission_policy.py`，纯函数离线可测）：三档 `read < confirm < write`（`RISK_TIERS` 全序）。工具风险表 `TOOL_RISK_TABLE` 为**唯一字面量源**——报修登记/转人工 = write、售后咨询/兜底回复 = read；Services 层不依赖 Agents，tests 强制校验与 `SupervisorToolRegistry` 的 tool_id/risk_tier 完全同源（防字面量漂移）；白名单外工具一律按 write 保守评估且拒绝直通；`endpoint_risk(GET/HEAD→read，写方法→write)` 供 API 层分级。
+- **服务层审计插桩**：`TicketService / HandoverService / DreamService` 构造可选 `audit_logger: Callable` 回调 + `audit_actor`（如 `repair_agent`/`complaint_agent`/`dream_scheduler`），**成功与异常双路径**记录（scene=业务域、action、resource_type、resource_id、risk_tier=write、result、detail）；回调失败仅 warning 绝不阻断业务。主管 `select_tool` 每次落审计（actor=supervisor、action=tool_select、risk_tier=工具档位，与 plan_log 复盘并存）；`AgentSessionRegistry` 构建 Agent 图时装配进程级 `AuditService(self._db_path).record`（`app.py` 的 AutoDream 调度同样装配）。
+- **幂等键治理（后台写 API）**：请求头 `Idempotency-Key` 取键（缺省服务端生成 uuid4）；业务执行前 `find_replay` 命中**成功**记录 → 200 + `X-Replay: true` 返回首次结果摘要（不重复建单/落库）；成功后带键落 `result=ok`（唯一索引兜底并发同键）；异常落 `result=error`（**不占键**，键文本并入 detail 可追溯）→ 客户端同键安全重试，故障自动恢复无需人工对账。
+- **审计查询页**：`GET /api/audit_logs` 只读过滤查询 + `/audit_logs` 管理页；`ip` 字段记录后台操作来源。
+
+### 8.4 兼容遗留端点说明（如实披露）
 
 `api/core/response_models.py` 中 `AppointmentRequest{user_id, service_type, preferred_time, notes}`、`AppointmentResponse`、`ConsultationRequest/Response`、`TaskClassificationRequest/Response` 等仍保留**改造前的预约语义词**（service_type/preferred_time…）。主聊天链路不经过它们（走 `/chat/stream`），仅 `/api/task|consultation|appointment` 三个演示入口使用。如需彻底对齐可后续替换为报修语义模型。
 
@@ -454,6 +467,10 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 | AutoDream 行级并发 | 进程内 per-user 线程锁串行，同用户不并行沉淀 | dream_service._thread_locks |
 | 主管选了不可用工具 | 处理方缺失（Agent 未挂载）自动落到兜底工具，不崩不静默 | classification_processor._invoke_tool |
 | 分类结果非白名单 | 注册表 `by_category` 兜底 `fallback_reply` + 规划复盘记录原始类别 | supervisor.tool_registry |
+| 白名单外工具 | 风险一律按 write 保守评估且拒绝直通（`is_whitelisted_tool=False`） | permission_policy |
+| 审计落库失败 | 回调内 try/except 仅告警不阻断业务；下一条照常记录 | audit_service / service._audit |
+| 幂等键重放（同键已成功） | 业务前短路 → 200 + `X-Replay: true` 返回首次记录摘要，不重复执行业务；唯一索引兜底并发同键 | api/audit_guard.replay_response |
+| 幂等键重试（上次失败） | 失败记录不占键（键并入 detail）→ 同键重试正常执行并落成功记录 | audit_service.record |
 | fast 通道未配置/不可用 | `resolve_channel` 透明回退 main 同配置模型（行为等价），仅装配差异 | model_provider.resolve_channel |
 | 派单冲突（后台操作） | 400 + 冲突说明，工单保留 pending 可改派 | api/ticket.py |
 | 非法状态流转 | 服务层白名单拒绝 → API 400 | ticket_service.update_status |
@@ -465,7 +482,7 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 
 ## 10. 测试策略与工程约定
 
-### 10.1 测试设计（172 项全离线，零 API Key 依赖）
+### 10.1 测试设计（193 项全离线，零 API Key 依赖）
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -483,16 +500,19 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 | `test_dream_service.py` | AutoDream 集成：资格不足跳过、全量沉淀（置信度/画像记忆/checkpoint）、二次空跑不重复、增量续跑、漂移降权、LLM 通道与兜底、任务锁接管、批量扫描 |
 | `test_tool_registry.py` | 主管工具注册表：四工具元数据（类别覆盖/风险分级/模型分级）、类别↔工具映射与未知兜底、清单注入分类 prompt、假路由器验证"观察→选工具→执行"分发与规划复盘、处理方缺失兜底 |
 | `test_model_tier.py` | 模型分级：fast 未配置透明回退 main、模型/提供商/Azure 部署覆盖、非法 tier 拒绝、按 tier 构造、控制器装配（分类/判定/抽取接 fast、话术/RAG 生成接 main） |
+| `test_audit_logging.py` | 审计落库与过滤；幂等键治理（成功记录占位 → 同键重放短路 / 失败不占位 → 同键重试落成功）；Ticket/Handover 写路径审计插桩；主管 tool_select 审计（四类别风险档位 + 未知兜底 + 无回调零变化） |
+| `test_permission_policy.py` | 风险分级：三档全序与确认门槛、HTTP 方法分级、工具白名单与主管注册表**同源一致**（防字面量漂移）、未知工具保守 write |
 
-`conftest.py` 夹具：`FakeChatModel`（可 `prompt | llm` 组合的同步替身）、`temp_db_path`（独立临时库）、`tmp_engine`。会话类测试以 `monkeypatch` 将 `chat_handler` 单例指向临时库，并把运行时 Agent 图的分类流替换为假流（不触网）。
+`conftest.py` 夹具：`FakeChatModel`（固定内容离线替身）、`temp_db_path`（独立临时库）、`tmp_engine`（内存建表验证）。会话/服务类测试以临时库直连构造 `AgentSessionRegistry`/Service，并用 `monkeypatch` 把 `chat_handler._registry/_memory_service` 指向临时库实例、`text_embedding.embed_input` 换成离线替身（不触网、不触 LLM）。
 
 ### 10.2 常用命令
 
 ```bash
-pytest                    # 全量 172 项离线
+pytest                    # 全量 193 项离线
 pytest tests/test_offline_services.py -q   # 确定性纯逻辑（状态机/保修/档期）
 pytest tests/test_dream_policy.py tests/test_dream_service.py -q  # AutoDream 策略/沉淀链路
 pytest tests/test_tool_registry.py tests/test_model_tier.py -q  # 主管工具化/模型分级
+pytest tests/test_audit_logging.py tests/test_permission_policy.py -q  # 权限治理：审计/幂等键/风险分级
 python services/dream_service.py     # 服务自测块：起调度器（演示入口，Ctrl+C 退出）
 python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦可演示核心链路）
 ```
@@ -503,8 +523,9 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦�
 - **路由顺序敏感**：`/api/engineers/schedules/today`、`/api/tickets/handovers` 必须声明在动态段之前（当前已满足，新增路由注意）；
 - **时间口径**：一律 `TimeConfig.naive_now()`；`parse_datetime` 返回 naive（§6.6）；
 - **删库即重置**：`data/smart_appointment.db` + 索引文件删除后重启即重建全部种子（旧库备份为 `.db.bak`）；
-- **会话**：按 `session_id` 隔离（每会话独立 Agent 图 + 写穿 `chat_sessions`），无登录体系、身份以手机号绑定为准；工单/订单按手机号归属（M12 起，旧"全局单进程会话"描述已废弃）。
+- **会话**：按 `session_id` 隔离（每会话独立 Agent 图 + 写穿 `chat_sessions`），无登录体系、身份以手机号绑定为准；工单/订单按手机号归属（M12 起，旧"全局单进程会话"描述已废弃）；
+- **审计与幂等键（M15）**：写 API 统一经 `api/audit_guard.py` 带键审计——`result=ok` 记录占用 `idem_key` 唯一索引（同键重放短路返回），失败记录**不占键**（键并入 detail 可追溯）；服务层审计回调失败只告警，绝不阻断业务；风险表 `TOOL_RISK_TABLE` 是唯一字面量源，改注册表工具必须同步改表（测试兜底）。
 
 ---
 
-*本文档锚点均已对照源码核实（M14 主管工具化 + 模型分级后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*
+*本文档锚点均已对照源码核实（M15 权限与安全治理后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*

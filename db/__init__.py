@@ -19,12 +19,13 @@ from .repositories import (
     ChatSessionRepository,
     UserMemoryRepository,
     DreamCheckpointRepository,
+    AuditLogRepository,
 )
 from .base import SessionManager
 from .models import (
     Base, Engineer, EngineerSchedule, RepairTicket, Order, HumanHandover,
     KnowledgeDocument, UserBehavior, UserPreference, UserRecommendation,
-    ChatSession, UserMemory, DreamCheckpoint
+    ChatSession, UserMemory, DreamCheckpoint, AuditLog
 )
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     'ChatSessionRepository',
     'UserMemoryRepository',
     'DreamCheckpointRepository',
+    'AuditLogRepository',
 
     # 基础设施
     'SessionManager',
@@ -63,5 +65,6 @@ __all__ = [
     'UserRecommendation',
     'ChatSession',
     'UserMemory',
-    'DreamCheckpoint'
+    'DreamCheckpoint',
+    'AuditLog'
 ]

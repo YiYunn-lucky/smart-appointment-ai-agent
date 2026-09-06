@@ -42,8 +42,20 @@ class AgentSessionRegistry:
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
         from services.chat_session_service import ChatSessionService
 
+        self._db_path = db_path
         self._session_svc = ChatSessionService(db_path)
         self._runtimes: "OrderedDict[str, SessionRuntime]" = OrderedDict()
+
+    def _make_audit_logger(self):
+        """进程级审计记录回调（M15）：主管工具选择/报修建单/投诉登记自动留痕"""
+        try:
+            from services.audit_service import AuditService
+
+            audit_service = AuditService(self._db_path)
+            return audit_service.record
+        except Exception as e:
+            logger.warning(f"审计服务装配失败（本进程会话不落审计）：{e}")
+            return None
 
     async def get(self, session_id: str) -> SessionRuntime:
         """获取（或构建）会话运行时；淘汰最久未用且已落库的运行时"""
@@ -64,9 +76,11 @@ class AgentSessionRegistry:
         row = self._session_svc.load(session_id)
         ctx = SessionContext.from_row(row) if row else SessionContext(session_id=session_id)
 
-        appointment_agent = AppointmentAgent(session_id=session_id)
+        audit_logger = self._make_audit_logger()
+        appointment_agent = AppointmentAgent(session_id=session_id, audit_logger=audit_logger)
         consultant_agent = ConsultantAgent(session_id=session_id)
-        task_agent = TaskClassificationAgent(appointment_agent, consultant_agent)
+        task_agent = TaskClassificationAgent(appointment_agent, consultant_agent,
+                                             audit_logger=audit_logger)
 
         if row and row.get("state_value"):
             try:

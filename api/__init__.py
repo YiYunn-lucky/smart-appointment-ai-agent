@@ -12,6 +12,7 @@ from .knowledge import router as knowledge_router
 from .engineer import router as engineer_router
 from .ticket import router as ticket_router
 from .user_behavior_analysis import router as follow_up_router
+from .audit import router as audit_router
 
 # 创建API路由列表（用于注册到FastAPI应用）
 api_routers = [
@@ -21,5 +22,6 @@ api_routers = [
     knowledge_router,
     engineer_router,
     ticket_router,
-    follow_up_router
+    follow_up_router,
+    audit_router
 ]

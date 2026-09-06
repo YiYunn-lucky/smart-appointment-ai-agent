@@ -374,3 +374,32 @@ class BaseDreamCheckpointRepository(ABC):
     def list_checkpoints(self, limit: int = 100) -> List[Dict[str, Any]]:
         """检查点列表（最近更新在前）"""
         pass
+
+
+class BaseAuditLogRepository(ABC):
+    """
+    操作审计日志数据访问抽象接口（M15）
+
+    记录/查询全链路写操作与主管工具选择；idem_key 唯一约束支撑后台写接口幂等重放。
+    """
+
+    @abstractmethod
+    def add_log(self, actor: str, scene: str, action: str,
+                resource_type: Optional[str] = None, resource_id: Optional[str] = None,
+                tool_id: Optional[str] = None, risk_tier: str = 'read',
+                result: str = 'ok', detail: Optional[str] = None,
+                idem_key: Optional[str] = None, ip: Optional[str] = None) -> Optional[int]:
+        """写一条审计日志；返回记录ID；idem_key 与既有记录冲突（幂等重放）时返回 None"""
+        pass
+
+    @abstractmethod
+    def list_logs(self, limit: int = 100, scene: Optional[str] = None,
+                  action: Optional[str] = None, risk_tier: Optional[str] = None,
+                  result: Optional[str] = None) -> List[Dict[str, Any]]:
+        """审计日志列表（最近在前，支持按场景/动作/风险级/结果过滤）"""
+        pass
+
+    @abstractmethod
+    def find_by_idem_key(self, idem_key: str) -> Optional[Dict[str, Any]]:
+        """按幂等键查既有记录（命中 = 该写请求已被处理过，直接重放）"""
+        pass

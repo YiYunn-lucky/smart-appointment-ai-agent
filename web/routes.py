@@ -133,3 +133,8 @@ async def follow_ups_page(request: Request):
 async def tickets_page(request: Request):
     """报修工单管理页面：工单列表、派单与状态流转"""
     return templates.TemplateResponse("tickets.html", {"request": request})
+
+@router.get("/audit_logs", response_class=HTMLResponse, summary="操作审计页面")
+async def audit_logs_page(request: Request):
+    """操作审计日志页面（M15）：全链路写操作留痕，可按场景/动作/风险/结果过滤"""
+    return templates.TemplateResponse("audit_logs.html", {"request": request})

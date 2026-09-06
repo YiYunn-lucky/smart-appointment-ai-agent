@@ -1,4 +1,5 @@
 from dotenv import load_dotenv
+from typing import Any, Callable, Optional
 from config.model_provider import create_chat_model
 from config.constants import SharedState, StateEnum
 from .supervisor import SupervisorToolRegistry
@@ -16,18 +17,20 @@ load_dotenv()
 class TaskClassificationAgent:
     """
     任务分类代理主控制器
-    
+
     职责：
     1. 初始化各个分类组件
     2. 提供统一的任务分类接口
     3. 管理与其他Agent的协调
     """
-    
-    def __init__(self, appointment_agent, consultant_agent):
+
+    def __init__(self, appointment_agent, consultant_agent,
+                 audit_logger: Optional[Callable[..., Any]] = None):
         # 基础设置
         self.appointment_agent = appointment_agent
         self.consultant_agent = consultant_agent
-        
+        self.audit_logger = audit_logger
+
         # 初始化LLM（主管分类属高频结构化短调用 → fast 小模型通道，未配置时透明回退 main）
         self.llm = self._initialize_llm()
 
@@ -40,7 +43,8 @@ class TaskClassificationAgent:
         self.agent_router = AgentRouter(
             appointment_agent,
             consultant_agent,
-            self.state_manager
+            self.state_manager,
+            audit_logger=audit_logger
         )
         self.unrelated_handler = UnrelatedHandler(self.state_manager)
         self.classification_processor = ClassificationProcessor(
@@ -48,7 +52,8 @@ class TaskClassificationAgent:
             self.state_manager,
             self.agent_router,
             self.unrelated_handler,
-            tool_registry=self.tool_registry
+            tool_registry=self.tool_registry,
+            audit_logger=audit_logger
         )
         
         # 设置回调函数

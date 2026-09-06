@@ -1,6 +1,6 @@
 # 安居家电售后智能客服 + 上门报修预约 Agent
 
-一个演示级「企业售后智能客服」多 Agent 系统：客户通过自然语言完成**家电报修登记 → 工程师上门预约 → 工单状态跟踪 → 保修查询 → 投诉转人工**的完整售后闭环；客服运营侧配套**报修工单管理、工程师排班、知识库管理、售后回访**等后台页面。
+一个演示级「企业售后智能客服」多 Agent 系统：客户通过自然语言完成**家电报修登记 → 工程师上门预约 → 工单状态跟踪 → 保修查询 → 投诉转人工**的完整售后闭环；客服运营侧配套**报修工单管理、工程师排班、知识库管理、售后回访、操作审计**等后台页面。
 
 ## 核心能力
 
@@ -24,6 +24,7 @@
 - `/knowledge` 知识库管理：条目增删改查与语义搜索
 - `/follow_ups` 售后回访：按客户手机号生成保养/保修到期/满意度回访话术，附工程师可约时段
 - **AutoDream 离线沉淀**：累计 ≥5 次会话且首次到最近一次活动跨度 ≥24h 的老客户，后台定时把分散的行为事件**增量回放**成画像——偏好置信度逐条累计、同维度未再确认的旧偏好**减半降权**（偏好漂移自动淡出）、画像摘要写入长期记忆（向量/内容去重，每人至多一条可召回画像）；任务锁 + 事件ID checkpoint 保证幂等、中断可续跑
+- **权限与安全治理**：全链路操作审计落库（`audit_logs`：主管工具选择/报修建单/派单流转/转人工登记/知识库变更/AutoDream 沉淀，含操作方、场景、动作、对象、风险分级、IP）；风险分级纯策略（read/confirm/write × 工具白名单，与主管注册表同源测试锁一致）；后台写接口统一幂等（`Idempotency-Key` 头，成功记录占用幂等键、同键重放短路返回首次结果、失败不占位可重试）；`/audit_logs` 审计页按场景/风险/结果过滤可查
 
 ## 系统架构
 
@@ -144,8 +145,8 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 ├── app.py                 # FastAPI 入口：路由注册 + 启动初始化
 ├── web/                   # Web 层：routes.py + templates + static
 │   ├── routes.py          #   页面路由与 /chat/stream SSE 流式聊天
-│   └── templates/         #   index / engineers / engineer_schedules / tickets / knowledge_management / follow_ups
-├── api/                   # API 层：engineer / ticket / knowledge / follow_ups / task / consultation / appointment
+│   └── templates/         #   index / engineers / engineer_schedules / tickets / knowledge_management / follow_ups / audit_logs
+├── api/                   # API 层：engineer / ticket / knowledge / follow_ups / task / consultation / appointment / audit（+ audit_guard 幂等公共件）
 ├── agents/                # Agents 层
 │   ├── task_classification_agent.py   # 任务分类 Agent（客服调度）
 │   ├── task_classification/           #   classifier / state_manager / agent_router / unrelated_handler / processor
@@ -156,14 +157,14 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 │   ├── consultant/                    #   knowledge_retriever / consultation_classifier / response_generator / prompt_builder
 │   ├── session/                       # 会话运行时：session_context / session_window / agent_session_registry
 │   └── user_behavior_agent.py + user_behavior/   # 用户行为与回访
-├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior / chat_session / memory（含 memory_scoring）/ dream_service（含 dream_policy 纯策略）
-├── db/                    # DB 层：models.py / db_router.py / repositories（含 chat_session / user_memory）/ base（session_manager、interfaces）
+├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior / chat_session / memory（含 memory_scoring）/ dream_service（含 dream_policy 纯策略）/ audit_service / permission_policy
+├── db/                    # DB 层：models.py / db_router.py / repositories（含 chat_session / user_memory / audit_log）/ base（session_manager、interfaces）
 ├── config/                # 模型提供方（main/fast 分级通道）、常量、时区与营业时间
-├── tests/                 # 172 项离线测试
+├── tests/                 # 193 项离线测试
 └── data/                  # SQLite 库与向量索引（运行时生成，已 gitignore）
 ```
 
-## 数据模型（12 张表）
+## 数据模型（13 张表）
 
 | 表 | 说明 |
 |---|---|
@@ -179,6 +180,7 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 | `chat_sessions` | 会话快照：session_id（唯一）、绑定客户、状态机值、预约槽位/短期窗口（JSON）、滚动摘要 |
 | `user_memories` | 客户长期记忆：类型（repair/consult/preference/profile）、重要度、语义向量（JSON）、来源会话，软删除 |
 | `dream_checkpoints` | AutoDream 沉淀检查点：每人一行，已回放事件ID（幂等断点）+ 任务锁（超时接管）+ 累计计数 |
+| `audit_logs` | 操作审计日志：操作方/场景/动作/对象/工具/风险分级/成败/详情/IP；`idem_key` 唯一索引支撑后台写接口幂等重放 |
 
 工单状态机：`pending → assigned → in_progress → completed`，前三态可 → `cancelled`；完成/取消即释放工程师忙档。保修期 = 购买日 + 保修年限（超出判超保，提示付费维修）。
 
@@ -273,14 +275,15 @@ RAG_MCP_CWD=C:/Users/Cloud/Desktop/RAG项目/MODULAR-RAG-MCP-SERVER-main   # RAG
 ## 测试
 
 ```bash
-pytest                    # 172 项全部离线运行，不依赖 LLM/Embedding Key
+pytest                    # 193 项全部离线运行，不依赖 LLM/Embedding Key
 pytest tests/test_offline_services.py -q   # 工单生命周期/保修边界/档期冲突等纯逻辑
 pytest tests/test_session_isolation.py tests/test_chat_handler_session.py -q  # 会话隔离/写穿/重启恢复
 pytest tests/test_dream_policy.py tests/test_dream_service.py -q  # AutoDream 资格/幂等/降权/画像/任务锁
 pytest tests/test_tool_registry.py tests/test_model_tier.py -q  # 主管工具化选择/规划复盘/模型分级通道装配
+pytest tests/test_audit_logging.py tests/test_permission_policy.py -q  # 审计落库/幂等键治理/风险分级与白名单同源
 ```
 
-覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原、AutoDream 沉淀资格边界（≥5 会话且跨度 ≥24h）、增量回放幂等、偏好冲突降权、画像记忆去重轮换、任务锁与崩溃残留接管、主管工具注册表（类别↔工具映射/未知兜底/清单注入提示词）、模型分级（fast 未配置透明回退/独立覆盖/分类·判定·抽取接 fast、生成接 main）等。
+覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原、AutoDream 沉淀资格边界（≥5 会话且跨度 ≥24h）、增量回放幂等、偏好冲突降权、画像记忆去重轮换、任务锁与崩溃残留接管、主管工具注册表（类别↔工具映射/未知兜底/清单注入提示词）、模型分级（fast 未配置透明回退/独立覆盖/分类·判定·抽取接 fast、生成接 main）、审计落库与过滤、幂等键治理（成功占位重放短路/失败不占位可重试）、服务层写路径审计插桩、风险分级矩阵（read/confirm/write × 工具白名单与注册表同源）等。
 
 ## 主要页面
 
@@ -292,10 +295,11 @@ pytest tests/test_tool_registry.py tests/test_model_tier.py -q  # 主管工具�
 | `/engineer_schedules` | 今日排班网格（9:00-18:00） |
 | `/knowledge` | 知识库管理（增删改查 + 搜索） |
 | `/follow_ups` | 售后回访（档案分析 + 话术生成） |
+| `/audit_logs` | 操作审计（全链路写留痕，场景/风险/结果过滤） |
 
 ## 已知边界（演示范围外）
 
-- **无登录体系**：会话按浏览器 `session_id` 隔离，无需登录即可对话；客户身份以消息内手机号绑定为准，工单与订单按手机号归属客户
+- **无登录/权限体系**：会话按浏览器 `session_id` 隔离，客户身份以消息内手机号绑定为准；后台写操作以「操作审计 + 风险分级 + 幂等键治理」兜底（当前无账号体系，无法区分具体操作员权限）
 - **不接支付**：超保维修费用仅话术提示，不产生真实交易
 - **转人工为登记制**：回执承诺 30 分钟回电，无真实外呼
 - 业务窗口 9:00-18:00 统一在 `config/time_config.py` 配置（唯一事实源）
