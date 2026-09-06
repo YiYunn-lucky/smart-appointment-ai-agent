@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 from config.model_provider import create_chat_model
 from config.constants import SharedState, StateEnum
+from .supervisor import SupervisorToolRegistry
 from .task_classification import (
     TaskClassifier,
     StateManager,
@@ -27,15 +28,18 @@ class TaskClassificationAgent:
         self.appointment_agent = appointment_agent
         self.consultant_agent = consultant_agent
         
-        # 初始化LLM
+        # 初始化LLM（主管分类属高频结构化短调用 → fast 小模型通道，未配置时透明回退 main）
         self.llm = self._initialize_llm()
-        
+
+        # 主管工具注册表：子 Agent / 确定性处理方登记为工具（分类即工具选择）
+        self.tool_registry = SupervisorToolRegistry()
+
         # 初始化组件
         self.state_manager = StateManager(SharedState())
-        self.task_classifier = TaskClassifier(self.llm)
+        self.task_classifier = TaskClassifier(self.llm, tools_text=self.tool_registry.manifest_text())
         self.agent_router = AgentRouter(
-            appointment_agent, 
-            consultant_agent, 
+            appointment_agent,
+            consultant_agent,
             self.state_manager
         )
         self.unrelated_handler = UnrelatedHandler(self.state_manager)
@@ -43,7 +47,8 @@ class TaskClassificationAgent:
             self.task_classifier,
             self.state_manager,
             self.agent_router,
-            self.unrelated_handler
+            self.unrelated_handler,
+            tool_registry=self.tool_registry
         )
         
         # 设置回调函数
@@ -53,8 +58,8 @@ class TaskClassificationAgent:
         self.state = self.state_manager.state
 
     def _initialize_llm(self):
-        """初始化通用聊天模型"""
-        return create_chat_model(temperature=0)
+        """初始化主管分类模型：fast 通道（高频结构化判断，快且省）"""
+        return create_chat_model(temperature=0, tier="fast")
     
     def _setup_callbacks(self):
         """设置Agent的回调函数"""

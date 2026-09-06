@@ -7,6 +7,7 @@ DeepSeek, Zhipu, and OpenAI by switching environment variables.
 from __future__ import annotations
 
 import os
+from typing import Any, Dict
 
 from dotenv import load_dotenv
 from langchain_openai import (
@@ -23,6 +24,10 @@ load_dotenv()
 CHAT_PROVIDERS = {"openai", "qwen", "deepseek", "zhipu", "openai-compatible"}
 EMBEDDING_PROVIDERS = {"openai", "qwen", "zhipu", "openai-compatible"}
 
+# 模型分级通道：main = 大模型（生成/推理质量优先）；fast = 本地小模型/轻量模型
+# （承接任务分类、相关性判定、槽位抽取等高频结构化短调用，成本与延迟更低）
+MODEL_TIERS = ("main", "fast")
+
 
 def _env(name: str, default: str | None = None) -> str | None:
     value = os.getenv(name)
@@ -34,23 +39,71 @@ def get_model_provider() -> str:
     return (_env("MODEL_PROVIDER", "azure") or "azure").strip().lower()
 
 
-def create_chat_model(temperature: float = 0):
+def resolve_channel(tier: str = "main") -> Dict[str, Any]:
+    """解析某模型通道的环境配置（纯解析、不构造对象，供测试与日志断言）。
+
+    - main：常规模型（生成质量优先）；
+    - fast：轻量/本地小模型，未配置 fast 专用模型时透明回退到 main 配置
+      （通道独立但等价，行为不变）。
+
+    OpenAI-compatible 分支：LLM_MODEL（main）/ LLM_FAST_MODEL（fast，可选
+    MODEL_FAST_PROVIDER 换提供商）；Azure 分支：AZURE_OPENAI_DEPLOYMENT /
+    AZURE_FAST_DEPLOYMENT（可选）。
+    """
+    if tier not in MODEL_TIERS:
+        raise ValueError(
+            f"Unsupported model tier={tier!r}. Use one of {MODEL_TIERS}."
+        )
+    is_fast = tier == "fast"
+    provider = get_model_provider()
+    if is_fast:
+        provider = _env("MODEL_FAST_PROVIDER") or provider
+    provider = provider.strip().lower()
+
+    cfg: Dict[str, Any] = {"tier": tier, "provider": provider,
+                           "model": None, "deployment": None}
+    if provider == "azure":
+        deployment = _env("AZURE_FAST_DEPLOYMENT") if is_fast else None
+        deployment = deployment or _env("AZURE_OPENAI_DEPLOYMENT")
+        cfg["deployment"] = deployment
+    elif provider in CHAT_PROVIDERS:
+        model = _env("LLM_FAST_MODEL") if is_fast else None
+        cfg["model"] = model or _env("LLM_MODEL", "qwen-plus") or "qwen-plus"
+    return cfg
+
+
+def channel_label(tier: str = "main") -> str:
+    """通道的人类可读标签：fast:qwen/qwen-turbo（供启动日志展示实际通道）"""
+    cfg = resolve_channel(tier)
+    return f"{tier}:{cfg['provider']}/{cfg['model'] or cfg['deployment'] or '(default)'}"
+
+
+def create_chat_model(temperature: float = 0, tier: str = "main"):
     """Create a chat model from environment configuration.
+
+    Args:
+        temperature: 采样温度。
+        tier: 模型通道，'main'（默认，生成质量优先）或 'fast'（本地小模型/轻量模型，
+            承接分类与槽位抽取等高频结构化任务；未配置 fast 专用模型时透明回退 main）。
 
     Azure-compatible env vars:
         MODEL_PROVIDER=azure
         AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT,
         AZURE_OPENAI_VERSION
+        AZURE_FAST_DEPLOYMENT            # fast 通道专用部署（可选）
 
     OpenAI-compatible env vars:
         MODEL_PROVIDER=qwen|deepseek|zhipu|openai|openai-compatible
         LLM_API_KEY, LLM_BASE_URL, LLM_MODEL
+        LLM_FAST_MODEL                   # fast 通道专用模型（可选）
+        MODEL_FAST_PROVIDER              # fast 通道提供商（可选，缺省同 MODEL_PROVIDER）
     """
-    provider = get_model_provider()
+    cfg = resolve_channel(tier)
+    provider = cfg["provider"]
 
     if provider == "azure":
         return AzureChatOpenAI(
-            azure_deployment=_env("AZURE_OPENAI_DEPLOYMENT"),
+            azure_deployment=cfg["deployment"],
             api_version=_env("AZURE_OPENAI_VERSION"),
             temperature=temperature,
             azure_endpoint=_env("AZURE_OPENAI_ENDPOINT"),
@@ -59,7 +112,7 @@ def create_chat_model(temperature: float = 0):
 
     if provider in CHAT_PROVIDERS:
         return ChatOpenAI(
-            model=_env("LLM_MODEL", "qwen-plus") or "qwen-plus",
+            model=cfg["model"],
             api_key=SecretStr(_env("LLM_API_KEY", "") or ""),
             base_url=_env("LLM_BASE_URL"),
             temperature=temperature,

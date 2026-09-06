@@ -26,12 +26,13 @@ class ConsultantAgent:
         # 会话上下文（由 AgentSessionRegistry 挂载；非空时注入客户背景并沉淀长期记忆）
         self.session_context = None
         
-        # 初始化LLM
+        # 初始化LLM：main 通道（知识问答生成）+ fast 通道（咨询相关性判定）
         self.llm = self._initialize_llm()
-        
+        self.structured_llm = self._initialize_structured_llm()
+
         # 初始化组件
         self.knowledge_retriever = KnowledgeRetriever()
-        self.consultation_classifier = ConsultationClassifier(self.llm)
+        self.consultation_classifier = ConsultationClassifier(self.structured_llm)
         self.response_generator = ResponseGenerator(self.llm)
         self.consultation_processor = ConsultationProcessor(
             self.knowledge_retriever,
@@ -40,8 +41,12 @@ class ConsultantAgent:
         )
 
     def _initialize_llm(self):
-        """初始化通用聊天模型"""
+        """初始化生成通道模型：main 大模型（RAG 回答生成）"""
         return create_chat_model(temperature=0.3)
+
+    def _initialize_structured_llm(self):
+        """初始化结构化判定模型：fast 通道（是否咨询的 YES/NO 短判断）"""
+        return create_chat_model(temperature=0, tier="fast")
 
     async def __aenter__(self):
         """异步上下文管理器入口"""

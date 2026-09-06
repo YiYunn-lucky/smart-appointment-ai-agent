@@ -31,7 +31,7 @@
 | 类别 | 选型 |
 | --- | --- |
 | 语言 / Web | Python 3.10+ / FastAPI + Uvicorn / Jinja2 + 原生 JS（EventSource SSE） |
-| LLM | LangChain，OpenAI 兼容工厂（`config/model_provider.py`，聊天与 Embedding 可分厂商） |
+| LLM | LangChain，OpenAI 兼容工厂（`config/model_provider.py`：聊天与 Embedding 可分厂商；聊天模型 main/fast 双通道分级，见 §3.1 模型分级） |
 | 向量 | FAISS：`IndexFlatIP`（知识语义检索）、`IndexFlatL2`（工程师技能相似排序） |
 | 存储 | SQLite 单文件 + SQLAlchemy 2.0（声明式 ORM + Repository 仓储 + 手工注入 db_path） |
 | 测试 | pytest + pytest-asyncio，59 项全离线（零外部 API） |
@@ -42,7 +42,7 @@
 
 | 名词 | 含义 | 对应代码/存储 |
 | --- | --- | --- |
-| 客服调度 | 任务分类 Agent（主调度器）：意图识别、状态机、路由、投诉登记、无关兜底 | `agents/task_classification_agent.py` |
+| 客服调度 | 任务分类 Agent（主调度器）：意图识别、工具化规划与路由、状态机、投诉登记、无关兜底 | `agents/task_classification_agent.py` + `agents/supervisor/`（工具注册表） |
 | 报修专员 | 预约 Agent：报修信息抽取、追问、工程师匹配、建单派单 | `agents/appointment_agent.py` |
 | 售后顾问 | 咨询 Agent：订单保修/工单进度查库短路 + RAG 知识问答 | `agents/consultant_agent.py` |
 | 用户行为 Agent | 行为记录、偏好置信度、回访判定与话术 | `agents/user_behavior_agent.py` |
@@ -90,6 +90,8 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 - Services 层模块内**函数级延迟 import**，规避 Agent↔Service 循环依赖；
 - Agents 组件的 LLM 模型在各自组件内（Classifier/Parser/Generator）通过 `config.model_provider` 工厂构建，API Key 缺失时组件自动走降级路径（见 §9）。
 
+**模型分级（M14）**：聊天模型 `create_chat_model(temperature, tier)` 双通道——`tier=main`（生成质量优先：话术/RAG 回答/回访/画像润色）与 `tier=fast`（本地小模型/轻量模型，承接高频结构化短调用）。装配规则：**主管任务分类、咨询相关性判定（YES/NO）、报修槽位抽取** → fast 通道；**报修确认话术与替代推荐文案、RAG 回答生成** → main 通道。控制器各自持有 `llm`（main）与 `structured_llm`（fast）两实例并按上表注入叶子组件；fast 通道未配置（`LLM_FAST_MODEL`/`AZURE_FAST_DEPLOYMENT` 缺省）时 `resolve_channel` 透明回退 main 配置——行为等价、零配置差异，仅在配了小模型时体现成本与延迟收益。
+
 ### 3.2 模块索引
 
 **入口 `app.py`**：`create_app()` 注册 7 个 API Router（`api/__init__.py: api_routers`）+ Web Router + 2 个异常处理器（`BusinessException → api_exception_handler`、`Exception → general_exception_handler`）；`startup_event → initialize_system()` 四步独立容错初始化（§9）。
@@ -102,8 +104,9 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `task_classification/task_classifier.py` | `TaskClassifier.VALID_CATEGORIES` | LLM 分类，枚举 `appointment/query/complaint/other`，异常→other |
 | `task_classification/state_manager.py` | `StateManager` | 三态（+OTHER）持有与合法迁移、reset/force_reset |
 | `task_classification/agent_router.py` | `AgentRouter` | route_to_appointment/consultation/**complaint**/route_by_state、转人工落库回执 |
-| `task_classification/classification_processor.py` | `ClassificationProcessor` | 编排：`_classify_rounds` 上限 >3 强制重置；同步/流式双通道 |
+| `task_classification/classification_processor.py` | `ClassificationProcessor` | 主管编排：分类 → `select_tool` 选工具（plan_log 复盘）→ `_invoke_tool` 执行；`_classify_rounds` 上限 >3 强制重置；同步/流式双通道 |
 | `task_classification/unrelated_handler.py` | `UnrelatedHandler` | 子 Agent 判无关 → 转回主调度重分类（带轮次上限） |
+| `supervisor/tool_registry.py` | `SupervisorToolRegistry` / `ToolSpec` | 主管工具注册表：类别↔工具一一映射、未知类别兜底、清单注入分类 prompt、risk_tier/model_tier 元数据 |
 | `appointment_agent.py` | `AppointmentAgent` | 报修流程控制；挂载会话上下文后槽位/窗口由 ctx 提供（无上下文时保持模块内历史，向后兼容） |
 | `appointment/input_parser.py` | `InputParser` | LLM 流式输出**纯 JSON 契约**（§5.2），JSONDecodeError 降级字典 |
 | `appointment/appointment_processor.py` | `AppointmentProcessor` | 历史合并、确认流处理、完整/不完整分派、成功建单流程 |
@@ -150,7 +153,7 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `base/interfaces.py` | 10 个抽象基类：BaseEngineer / BaseSchedule / BaseRepairTicket / BaseOrder / BaseHumanHandover / BaseKnowledge / BaseUserBehavior / BaseChatSession / BaseUserMemory / BaseDreamCheckpointRepository |
 | `base/session_manager.py` | `SessionManager(db_path)` 构造即 `create_all` + 会话工厂；**删库文件 = 零迁移重置** |
 
-**Config 层**：`constants.py`（`StateEnum` + `SharedState`）、`database.py`（`DatabaseConfig`，env `DATABASE_URL/DB_ECHO/...`）、`model_provider.py`（`create_chat_model/create_embedding_model`，env `LLM_*`/`EMBEDDING_*`，支持 openai/qwen/deepseek/zhipu/azure/openai-compatible）、`settings.py`、`time_config.py`（§6.6 唯一时间事实源）。
+**Config 层**：`constants.py`（`StateEnum` + `SharedState`）、`database.py`（`DatabaseConfig`，env `DATABASE_URL/DB_ECHO/...`）、`model_provider.py`（`create_chat_model(temperature, tier)/create_embedding_model`，env `LLM_*`/`EMBEDDING_*`，支持 openai/qwen/deepseek/zhipu/azure/openai-compatible；**模型分级（M14）**：`tier ∈ main/fast`——fast 通道读 `LLM_FAST_MODEL`/`MODEL_FAST_PROVIDER`（Azure 为 `AZURE_FAST_DEPLOYMENT`），未配置透明回退 main 配置；`resolve_channel/channel_label` 纯函数供解析与日志）、`settings.py`、`time_config.py`（§6.6 唯一时间事实源）。
 
 **Web 层**：`web/routes.py` + `templates/`（index / tickets / engineers / engineer_schedules / knowledge_management / follow_ups）+ `static/styles.css`。`api/chat_handler.py` 经 `AgentSessionRegistry` 按 `session_id` 取/建会话运行时（每会话独立 Agent 图 + `SessionContext`），处理期持 per-session 锁，结束时写穿 `chat_sessions`（详见 §4.1）；前端用 `localStorage` 固定 `session_id`。
 
@@ -205,6 +208,8 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 
 - **输出枚举**（`VALID_CATEGORIES`）：`appointment`（报修/预约上门）、`query`（售后咨询+订单保修/工单进度查询）、`complaint`（投诉/转人工）、`other`（无关兜底）；
 - Prompt 内嵌每个类别的家电例句（“空调不制冷，帮我预约个师傅上门看看”→appointment 等 5 例），LLM 输出归一化（小写/去空白）；
+- **主管 ReAct 工具化（M14）**：子 Agent / 确定性流程登记为主管工具（`agents/supervisor/tool_registry.py`：`repair_booking` 报修登记 / `aftersale_consult` 售后咨询 / `human_handover` 转人工 / `fallback_reply` 兜底），每个 `ToolSpec` 携带 `category`（与分类枚举一一对应）、`handler`（处理方）、`risk_tier`（read/confirm/write，M15 权限门禁白名单源头）、`model_tier`（结构化入口 fast）；工具清单注入分类 prompt——**分类即工具选择**；`ClassificationProcessor.select_tool` 落选并写 `plan_log`（category→tool_id 规划复盘，供审计），`_invoke_tool` 按 handler 分发（处理方缺失自动落到兜底工具）；
+- **观察 → 再规划**：子 Agent 判无关转回（`handle_unrelated_async`）即主管重新规划；单条消息 `_classify_rounds > 3` 强制重置并兜底（防递归）；
 - LLM 异常/超时/无 Key → 返回 `other`，调度层给“抱歉 + 能力清单”（`AgentRouter.handle_unsupported_task` / `get_available_services`）兜底。
 
 ### 5.2 报修信息抽取契约（InputParser）
@@ -447,6 +452,9 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 | AutoDream 画像润色 LLM 失败/无 Key | `dream_policy.build_profile_text` 确定性模板（数据较少给提示文案） | dream_service profile_text_llm |
 | AutoDream 任务锁冲突 | 返回 `locked` 跳过该客户本轮；崩溃残留（>30 分钟）自动接管 | dream_checkpoint_repository |
 | AutoDream 行级并发 | 进程内 per-user 线程锁串行，同用户不并行沉淀 | dream_service._thread_locks |
+| 主管选了不可用工具 | 处理方缺失（Agent 未挂载）自动落到兜底工具，不崩不静默 | classification_processor._invoke_tool |
+| 分类结果非白名单 | 注册表 `by_category` 兜底 `fallback_reply` + 规划复盘记录原始类别 | supervisor.tool_registry |
+| fast 通道未配置/不可用 | `resolve_channel` 透明回退 main 同配置模型（行为等价），仅装配差异 | model_provider.resolve_channel |
 | 派单冲突（后台操作） | 400 + 冲突说明，工单保留 pending 可改派 | api/ticket.py |
 | 非法状态流转 | 服务层白名单拒绝 → API 400 | ticket_service.update_status |
 | 滚动摘要 LLM 失败 | 截断拼接 + 「（早期对话截断）」标记，窗口正常滚动 | session_window.fallback_summary |
@@ -457,7 +465,7 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 
 ## 10. 测试策略与工程约定
 
-### 10.1 测试设计（148 项全离线，零 API Key 依赖）
+### 10.1 测试设计（172 项全离线，零 API Key 依赖）
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -473,15 +481,18 @@ dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 | `test_chat_handler_session.py` | 入口链路：绑定/匿名、多轮窗口写穿、重启还原续谈、交错会话隔离、召回注入 ctx.recalled |
 | `test_dream_policy.py` | AutoDream 纯函数：会话/跨度资格边界（≥5 且 ≥24h）、增量回放幂等、画像聚合排序、偏好增量、冲突降权、模板文案 |
 | `test_dream_service.py` | AutoDream 集成：资格不足跳过、全量沉淀（置信度/画像记忆/checkpoint）、二次空跑不重复、增量续跑、漂移降权、LLM 通道与兜底、任务锁接管、批量扫描 |
+| `test_tool_registry.py` | 主管工具注册表：四工具元数据（类别覆盖/风险分级/模型分级）、类别↔工具映射与未知兜底、清单注入分类 prompt、假路由器验证"观察→选工具→执行"分发与规划复盘、处理方缺失兜底 |
+| `test_model_tier.py` | 模型分级：fast 未配置透明回退 main、模型/提供商/Azure 部署覆盖、非法 tier 拒绝、按 tier 构造、控制器装配（分类/判定/抽取接 fast、话术/RAG 生成接 main） |
 
 `conftest.py` 夹具：`FakeChatModel`（可 `prompt | llm` 组合的同步替身）、`temp_db_path`（独立临时库）、`tmp_engine`。会话类测试以 `monkeypatch` 将 `chat_handler` 单例指向临时库，并把运行时 Agent 图的分类流替换为假流（不触网）。
 
 ### 10.2 常用命令
 
 ```bash
-pytest                    # 全量 148 项离线
+pytest                    # 全量 172 项离线
 pytest tests/test_offline_services.py -q   # 确定性纯逻辑（状态机/保修/档期）
 pytest tests/test_dream_policy.py tests/test_dream_service.py -q  # AutoDream 策略/沉淀链路
+pytest tests/test_tool_registry.py tests/test_model_tier.py -q  # 主管工具化/模型分级
 python services/dream_service.py     # 服务自测块：起调度器（演示入口，Ctrl+C 退出）
 python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦可演示核心链路）
 ```
@@ -496,4 +507,4 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦�
 
 ---
 
-*本文档锚点均已对照源码核实（M13 AutoDream 后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*
+*本文档锚点均已对照源码核实（M14 主管工具化 + 模型分级后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*

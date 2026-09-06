@@ -8,36 +8,62 @@
 4. 提供统一的流程入口
 """
 
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Dict, List, Optional
 from .task_classifier import TaskClassifier
 from .state_manager import StateManager
 from .agent_router import AgentRouter
 from .unrelated_handler import UnrelatedHandler
+from agents.supervisor.tool_registry import SupervisorToolRegistry, ToolSpec
 
 
 class ClassificationProcessor:
-    """分类流程处理器 - 协调完整的任务分类和处理流程"""
-    
-    def __init__(self, 
+    """分类流程处理器 - 协调完整的任务分类和处理流程（主管 ReAct：观察→规划→执行→再观察）"""
+
+    def __init__(self,
                  task_classifier: TaskClassifier,
                  state_manager: StateManager,
                  agent_router: AgentRouter,
-                 unrelated_handler: UnrelatedHandler):
+                 unrelated_handler: UnrelatedHandler,
+                 tool_registry: Optional[SupervisorToolRegistry] = None):
         """
         初始化分类流程处理器
-        
+
         Args:
             task_classifier: 任务分类器
             state_manager: 状态管理器
             agent_router: 智能体路由器
             unrelated_handler: 无关请求处理器
+            tool_registry: 主管工具注册表（缺省默认工具集；工具与分类枚举一一对应）
         """
         self.task_classifier = task_classifier
         self.state_manager = state_manager
         self.agent_router = agent_router
         self.unrelated_handler = unrelated_handler
+        self.tool_registry = tool_registry or SupervisorToolRegistry()
+        # 主管规划复盘：每轮回合记录 (category, tool_id)，供审计与测试断言
+        self.plan_log: List[Dict[str, str]] = []
         # 单条消息内"子任务转回再分类"的轮次计数：售后顾问等子任务误判转回时防止无限递归
         self._classify_rounds = 0
+
+    # ---------- 主管规划：工具选择与执行 ----------
+
+    def select_tool(self, category: str) -> ToolSpec:
+        """主管规划：分类结果 → 选定工具（未知类别自动落到兜底工具）"""
+        tool = self.tool_registry.by_category(category)
+        self.plan_log.append({"category": category, "tool_id": tool.tool_id})
+        return tool
+
+    def _invoke_tool(self, tool: ToolSpec, task: str) -> AsyncGenerator[str, None]:
+        """主管执行：把选中的工具落到对应处理方（handler 即子 Agent / 确定性流程）"""
+        handler = tool.handler
+        if handler == "appointment" and self.agent_router.appointment_agent:
+            return self.agent_router.route_to_appointment(task)
+        if handler == "consultation" and self.agent_router.consultant_agent:
+            return self.agent_router.route_to_consultation(task)
+        if handler == "complaint":
+            return self.agent_router.route_to_complaint(task)
+        # fallback / 处理方缺失：能力清单兜底（与原分类链路的 else 分支等价）
+        return self.agent_router.handle_unsupported_task(tool.category)
     
     async def process_task_stream(self, task: str) -> AsyncGenerator[str, None]:
         """
@@ -62,24 +88,13 @@ class ClassificationProcessor:
                         yield token
                     return
 
-                # 进行任务分类
+                # 进行任务分类（主管观察：LLM 返回类别）
                 category = await self.task_classifier.classify_task(task)
 
-                # 根据分类结果路由
-                if category == "appointment" and self.agent_router.appointment_agent:
-                    async for token in self.agent_router.route_to_appointment(task):
-                        yield token
-                elif category == "query" and self.agent_router.consultant_agent:
-                    async for token in self.agent_router.route_to_consultation(task):
-                        yield token
-                elif category == "complaint":
-                    # 投诉/转人工：单轮登记处理
-                    async for token in self.agent_router.route_to_complaint(task):
-                        yield token
-                else:
-                    # 不支持的任务类型
-                    async for token in self.agent_router.handle_unsupported_task(category):
-                        yield token
+                # 主管规划：按分类结果从工具注册表选择工具并执行
+                tool = self.select_tool(category)
+                async for token in self._invoke_tool(tool, task):
+                    yield token
                 # 本条消息的路由链正常结束（未发生转回递归）→ 重置轮次计数
                 self._classify_rounds = 0
             else:
@@ -106,22 +121,22 @@ class ClassificationProcessor:
             # 检查是否需要进行分类
             if self.state_manager.should_classify():
                 category = await self.task_classifier.classify_task(task)
+                tool = self.select_tool(category)
 
-                if category == "appointment" and self.agent_router.appointment_agent:
+                if tool.handler == "appointment" and self.agent_router.appointment_agent:
                     self.state_manager.transition_to_appointment()
                     return await self.agent_router.appointment_agent.run(user_input=task)
-                elif category == "query" and self.agent_router.consultant_agent:
+                if tool.handler == "consultation" and self.agent_router.consultant_agent:
                     self.state_manager.transition_to_consultation()
                     async with self.agent_router.consultant_agent as agent:
                         return await agent.consult(task)
-                elif category == "complaint":
+                if tool.handler == "complaint":
                     # 投诉/转人工：单轮登记处理
                     result = ""
                     async for token in self.agent_router.route_to_complaint(task):
                         result += token
                     return result
-                else:
-                    return "抱歉，我暂时无法处理这类任务。安居家电售后客服可以协助您：家电报修登记、售后政策咨询、订单保修查询、投诉转人工。"
+                return "抱歉，我暂时无法处理这类任务。安居家电售后客服可以协助您：家电报修登记、售后政策咨询、订单保修查询、投诉转人工。"
             else:
                 # 根据当前状态继续处理
                 if self.state_manager.is_in_appointment_flow():

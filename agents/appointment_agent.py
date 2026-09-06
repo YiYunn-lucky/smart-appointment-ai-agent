@@ -30,11 +30,12 @@ class AppointmentAgent:
         self.unrelated_callback = unrelated_callback
         self.state = None
         
-        # 初始化LLM
+        # 初始化LLM：main 通道（话术/推荐文案生成）+ fast 通道（槽位抽取，未配置时回退 main）
         self.llm = self._initialize_llm()
+        self.structured_llm = self._initialize_structured_llm()
 
         # 初始化组件
-        self.input_parser = InputParser(self.llm)
+        self.input_parser = InputParser(self.structured_llm)
         self.engineer_finder = EngineerFinder()
         self.message_builder = MessageBuilder()
         self.appointment_processor = AppointmentProcessor(
@@ -54,8 +55,12 @@ class AppointmentAgent:
         self.reset()
 
     def _initialize_llm(self):
-        """初始化通用聊天模型"""
+        """初始化生成通道模型：main 大模型（确认话术/替代工程师推荐文案）"""
         return create_chat_model(temperature=0)
+
+    def _initialize_structured_llm(self):
+        """初始化结构化抽取模型：fast 通道（报修信息 JSON 抽取，高频短调用）"""
+        return create_chat_model(temperature=0, tier="fast")
 
     def _get_chat_history(self, session_id: str) -> InMemoryChatMessageHistory:
         """获取或创建会话历史记录"""

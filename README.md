@@ -12,6 +12,8 @@
 - **投诉转人工**：登记诉求并承诺 30 分钟内回电，落库为转人工记录
 - **售后知识问答**：保修政策、收费标准、故障自查等通过知识库 RAG 检索回答
 - **多会话隔离 + 分层记忆**：每会话独立运行时与最近 10 轮短期窗口（互不串场，刷新/重启可续谈）；报修与咨询要点沉淀为长期记忆，老客户再对话按 `0.6 语义 + 0.3 时效 + 0.1 重要度` 召回 Top-5 注入客服背景
+- **主管 ReAct 工具化**：子 Agent 与确定性流程登记为主管「工具」（注册表带风险/模型分级元数据）；主管每轮 观察→选工具→执行→再观察：分类即工具选择、工具清单注入分类提示词、子任务无关信号触发重新规划（带轮次上限）
+- **模型分级（双通道）**：`main` 通道承接话术/RAG 回答生成，`fast` 通道（本地小/轻量模型）承接任务分类、咨询相关性判定、槽位抽取等高频结构化短调用——`.env` 配 `LLM_FAST_MODEL` 即可启用，未配置自动透明回退 main 模型
 - 服务窗口统一 **9:00–18:00**，默认上门维修窗口 2 小时
 
 面向运营（后台页面）：
@@ -59,9 +61,10 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 ### 任务分类 Agent —— 客服调度（主调度器）
 
 - 将用户请求分为四类：`appointment`（报修/预约上门）、`query`（售后咨询与订单/保修/工单进度查询）、`complaint`（投诉/转人工）、`other`（无关请求兜底）
+- **工具化调度**：子 Agent 入口登记为工具（`agents/supervisor/tool_registry.py`：报修登记/售后咨询/转人工/兜底，标注风险与模型分级）；主管按分类结果从注册表选工具执行——分类即工具选择，每轮回合记录规划复盘（category→tool_id，供审计）
 - 持有状态机（CLASSIFY/APPOINTMENT/CONSULT）与路由器，负责把消息分发给对应子 Agent
 - 投诉类在**调度层**直接落库转人工记录并回执，无需进入子流程
-- 子 Agent 将请求判为无关时转回调度重新分类；设有递归轮次上限防止死循环
+- 子 Agent 将请求判为无关时转回调度重新分类（主管重新规划）；设有递归轮次上限防止死循环
 
 ### 报修专员 Agent（Appointment Agent）—— 核心业务流程
 
@@ -130,7 +133,7 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 |---|---|
 | 语言/框架 | Python 3.10+ / FastAPI + Uvicorn |
 | Web 页面 | Jinja2 模板 + 原生 JS（SSE 流式渲染） |
-| LLM | LangChain + OpenAI 兼容接口（可换 qwen/deepseek/zhipu/openai/azure） |
+| LLM | LangChain + OpenAI 兼容接口（可换 qwen/deepseek/zhipu/openai/azure；`main` 生成 + `fast` 结构化双通道分级） |
 | 向量检索 | FAISS（IndexFlatIP 语义检索 / IndexFlatL2 相似匹配） |
 | 存储 | SQLite + SQLAlchemy 2.0（声明式 ORM + 仓储模式） |
 | 测试 | pytest（离线可跑，不依赖 API Key） |
@@ -146,6 +149,7 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 ├── agents/                # Agents 层
 │   ├── task_classification_agent.py   # 任务分类 Agent（客服调度）
 │   ├── task_classification/           #   classifier / state_manager / agent_router / unrelated_handler / processor
+│   ├── supervisor/                    #   主管工具注册表（工具元数据 + 清单注入 + 规划复盘）
 │   ├── appointment_agent.py           # 报修专员 Agent
 │   ├── appointment/                   #   input_parser / engineer_finder / message_builder / processor
 │   ├── consultant_agent.py            # 售后顾问 Agent
@@ -154,8 +158,8 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 │   └── user_behavior_agent.py + user_behavior/   # 用户行为与回访
 ├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior / chat_session / memory（含 memory_scoring）/ dream_service（含 dream_policy 纯策略）
 ├── db/                    # DB 层：models.py / db_router.py / repositories（含 chat_session / user_memory）/ base（session_manager、interfaces）
-├── config/                # 模型提供方、常量、时区与营业时间
-├── tests/                 # 107 项离线测试
+├── config/                # 模型提供方（main/fast 分级通道）、常量、时区与营业时间
+├── tests/                 # 172 项离线测试
 └── data/                  # SQLite 库与向量索引（运行时生成，已 gitignore）
 ```
 
@@ -269,13 +273,14 @@ RAG_MCP_CWD=C:/Users/Cloud/Desktop/RAG项目/MODULAR-RAG-MCP-SERVER-main   # RAG
 ## 测试
 
 ```bash
-pytest                    # 148 项全部离线运行，不依赖 LLM/Embedding Key
+pytest                    # 172 项全部离线运行，不依赖 LLM/Embedding Key
 pytest tests/test_offline_services.py -q   # 工单生命周期/保修边界/档期冲突等纯逻辑
 pytest tests/test_session_isolation.py tests/test_chat_handler_session.py -q  # 会话隔离/写穿/重启恢复
 pytest tests/test_dream_policy.py tests/test_dream_service.py -q  # AutoDream 资格/幂等/降权/画像/任务锁
+pytest tests/test_tool_registry.py tests/test_model_tier.py -q  # 主管工具化选择/规划复盘/模型分级通道装配
 ```
 
-覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原、AutoDream 沉淀资格边界（≥5 会话且跨度 ≥24h）、增量回放幂等、偏好冲突降权、画像记忆去重轮换、任务锁与崩溃残留接管等。
+覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原、AutoDream 沉淀资格边界（≥5 会话且跨度 ≥24h）、增量回放幂等、偏好冲突降权、画像记忆去重轮换、任务锁与崩溃残留接管、主管工具注册表（类别↔工具映射/未知兜底/清单注入提示词）、模型分级（fast 未配置透明回退/独立覆盖/分类·判定·抽取接 fast、生成接 main）等。
 
 ## 主要页面
 

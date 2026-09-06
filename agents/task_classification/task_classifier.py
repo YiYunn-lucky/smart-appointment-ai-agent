@@ -21,13 +21,17 @@ class TaskClassifier:
 
     VALID_CATEGORIES = {'appointment', 'query', 'complaint', 'other'}
 
-    def __init__(self, llm: BaseChatModel):
+    def __init__(self, llm: BaseChatModel, tools_text: str | None = None):
         self.llm = llm
+        self.tools_text = tools_text
         self._initialize_prompt()
         self.chain = self.prompt | self.llm
 
     def _initialize_prompt(self):
         """初始化分类提示词模板"""
+        tool_manifest = (f"\n{self.tools_text}\n" if self.tools_text
+                         else "\n请将任务归类为以下类别，输出只能选择以下之一：\n"
+                              "1. appointment\n2. query\n3. complaint\n4. other\n只返回类别英文名。\n")
         self.prompt = PromptTemplate(
             input_variables=["task"],
             template=(
@@ -41,12 +45,7 @@ class TaskClassifier:
                 "3. complaint（投诉转人工类）：客户表达不满、投诉、要求转人工或找负责人，"
                 "例如'我要投诉你们的服务'、'帮我转人工客服'。\n"
                 "4. other（其他类）：与安居家电售后服务完全无关的请求，例如问天气、股票、闲聊等。\n"
-                "请将任务归类为以下类别，输出只能选择以下之一：\n"
-                "1. appointment\n"
-                "2. query\n"
-                "3. complaint\n"
-                "4. other\n"
-                "只返回类别英文名。\n\n"
+                + tool_manifest +
                 "举例说明：\n"
                 "假如task为'空调不制冷，帮我预约个师傅上门看看'，则输出appointment。\n"
                 "假如task为'我去年买的冰箱还在保修期内吗'，则输出query。\n"
