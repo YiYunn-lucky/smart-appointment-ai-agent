@@ -7,7 +7,7 @@
 """
 
 import re
-from typing import AsyncGenerator, Dict, Any
+from typing import AsyncGenerator, Dict, Any, Optional
 from .knowledge_retriever import KnowledgeRetriever
 from .consultation_classifier import ConsultationClassifier
 from .response_generator import ResponseGenerator
@@ -51,8 +51,10 @@ class ConsultationProcessor:
         return response
 
     async def process_consultation_stream(self, user_input: str, session_id: str,
-                                          background: str = "") -> AsyncGenerator[str, None]:
-        """处理流式咨询（background 为客户档案/历史要点，RAG 生成时透传）"""
+                                          background: str = "",
+                                          user_id: Optional[str] = None) -> AsyncGenerator[str, None]:
+        """处理流式咨询（background 为客户档案/历史要点，RAG 生成时透传；
+        user_id 为已绑定客户手机号，咨询行为按客户落库供离线沉淀）"""
         try:
             # 0. 订单保修/工单进度等查询意图直接查库答复
             lookup_answer = self._try_lookup_answer(user_input)
@@ -60,7 +62,7 @@ class ConsultationProcessor:
                 yield "[REPLY][售后顾问]"
                 for char in lookup_answer:
                     yield char
-                await self._record_consultation_behavior(user_input, [], session_id)
+                await self._record_consultation_behavior(user_input, [], session_id, user_id)
                 return
 
             # 1. 检索知识
@@ -72,7 +74,7 @@ class ConsultationProcessor:
                 yield token
 
             # 3. 记录用户行为
-            await self._record_consultation_behavior(user_input, knowledge_docs, session_id)
+            await self._record_consultation_behavior(user_input, knowledge_docs, session_id, user_id)
 
         except Exception as e:
             yield f"[REPLY][售后顾问]抱歉，处理您的问题时出现了错误：{str(e)}"
@@ -190,8 +192,9 @@ class ConsultationProcessor:
         lines.append("如需了解具体维修费用或预约工程师上门，随时告诉我。")
         return "\n".join(lines)
 
-    async def _record_consultation_behavior(self, user_input: str, knowledge_docs: list, session_id: str):
-        """记录咨询行为"""
+    async def _record_consultation_behavior(self, user_input: str, knowledge_docs: list,
+                                            session_id: str, user_id: Optional[str] = None):
+        """记录咨询行为（已绑定客户时按手机号归属，供 AutoDream 离线沉淀）"""
         try:
             from agents.user_behavior_agent import UserBehaviorAgent
             behavior_agent = UserBehaviorAgent()
@@ -205,7 +208,8 @@ class ConsultationProcessor:
             behavior_agent.record_behavior(
                 action_type='consultation',
                 action_data=action_data,
-                session_id=session_id
+                session_id=session_id,
+                user_id=user_id or 'default_user'
             )
 
         except Exception as behavior_error:

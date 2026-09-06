@@ -21,6 +21,7 @@
 - `/engineer_schedules` 今日排班网格（9:00-18:00）
 - `/knowledge` 知识库管理：条目增删改查与语义搜索
 - `/follow_ups` 售后回访：按客户手机号生成保养/保修到期/满意度回访话术，附工程师可约时段
+- **AutoDream 离线沉淀**：累计 ≥5 次会话且首次到最近一次活动跨度 ≥24h 的老客户，后台定时把分散的行为事件**增量回放**成画像——偏好置信度逐条累计、同维度未再确认的旧偏好**减半降权**（偏好漂移自动淡出）、画像摘要写入长期记忆（向量/内容去重，每人至多一条可召回画像）；任务锁 + 事件ID checkpoint 保证幂等、中断可续跑
 
 ## 系统架构
 
@@ -81,6 +82,11 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 - 30 天无报修客户生成保养回访提醒；保修 30 天内到期订单生成续保提醒（调度器定期产出）
 - 支撑 `/follow_ups` 回访页：常用工程师 + 可约时段生成个性化回访话术
 
+### AutoDream 沉淀服务（DreamService）—— 离线画像沉淀
+
+把分散在多会话的客户行为离线回放成长期记忆画像（后台定时 + 手动触发，口径见上文「核心能力」）：
+资格判定 → 增量回放 → 偏好置信度更新 → 冲突降权 → 画像记忆写入（LLM 润色失败自动走确定性模板）→ checkpoint 落库。降级原则与全项目一致：无 Key 环境下资格判定、置信度、降权、模板画像全部可用，仅 LLM 润色自动跳过。
+
 ## 核心设计思想
 
 1. **任务分类降低系统复杂度**：一次对话只处理一个主任务，状态机保证上下文不串场，坏输入（无关请求）在入口就被兜住
@@ -113,7 +119,7 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 - **每会话一张 Agent 图**：按 `session_id` 惰性构建（客服调度 + 报修专员 + 售后顾问），进程内 LRU 上限 8；同会话并发以 per-session 锁串行，多会话互不串场
 - **单一真相源 `SessionContext`**：客户绑定（手机号）、预约槽位、短期窗口、滚动摘要；每轮结束整份快照写穿 `chat_sessions` 表 → 刷新页面、LRU 淘汰、进程重启均可按行还原（含状态机值）
 - **短期记忆窗口**：一问一答为一轮，容量 10 轮；占用达 60% 时把最旧轮次滚入滚动摘要（LLM 摘要失败自动降级为截断拼接并标记「早期对话截断」），窗口保留近约 6 轮原文
-- **长期记忆**：报修成功 / 咨询完成沉淀为 `user_memories`（类型 repair/consult/preference、重要度 0.8/0.5/0.6、语义向量）；客户再次出现（消息带手机号自动绑定）时按召回分召回 Top-5，注入咨询背景与提示词，实现跨会话「记得老客户」
+- **长期记忆**：报修成功 / 咨询完成沉淀为 `user_memories`（类型 repair/consult/preference、重要度 0.8/0.5/0.6、语义向量）；AutoDream 沉淀把老客户画像写入 `profile` 型记忆（重要度 0.7，去重轮换至多一条）；客户再次出现（消息带手机号自动绑定）时按召回分召回 Top-5，注入咨询背景与提示词，实现跨会话「记得老客户」
 - **Web 会话标识**：浏览器 `localStorage` 保存 `session_id`（请求头透传，后端缺省时生成并回传 `X-Session-Id`），无需登录即保持同一会话
 
 召回分 = `0.6 × 语义相似度 + 0.3 × 时效（30 天线性衰减）+ 0.1 × 重要度`；Embedding 不可用时自动降级为 `(0.3×时效 + 0.1×重要度) / 0.4` 归一排序（无 Key 环境可完整运行）。
@@ -146,14 +152,14 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 │   ├── consultant/                    #   knowledge_retriever / consultation_classifier / response_generator / prompt_builder
 │   ├── session/                       # 会话运行时：session_context / session_window / agent_session_registry
 │   └── user_behavior_agent.py + user_behavior/   # 用户行为与回访
-├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior / chat_session / memory（含 memory_scoring）
+├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior / chat_session / memory（含 memory_scoring）/ dream_service（含 dream_policy 纯策略）
 ├── db/                    # DB 层：models.py / db_router.py / repositories（含 chat_session / user_memory）/ base（session_manager、interfaces）
 ├── config/                # 模型提供方、常量、时区与营业时间
 ├── tests/                 # 107 项离线测试
 └── data/                  # SQLite 库与向量索引（运行时生成，已 gitignore）
 ```
 
-## 数据模型（11 张表）
+## 数据模型（12 张表）
 
 | 表 | 说明 |
 |---|---|
@@ -167,7 +173,8 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 | `user_preferences` | 偏好与置信度（品类/故障/时段/工程师） |
 | `user_recommendations` | 回访/提醒任务产出 |
 | `chat_sessions` | 会话快照：session_id（唯一）、绑定客户、状态机值、预约槽位/短期窗口（JSON）、滚动摘要 |
-| `user_memories` | 客户长期记忆：类型（repair/consult/preference）、重要度、语义向量（JSON）、来源会话，软删除 |
+| `user_memories` | 客户长期记忆：类型（repair/consult/preference/profile）、重要度、语义向量（JSON）、来源会话，软删除 |
+| `dream_checkpoints` | AutoDream 沉淀检查点：每人一行，已回放事件ID（幂等断点）+ 任务锁（超时接管）+ 累计计数 |
 
 工单状态机：`pending → assigned → in_progress → completed`，前三态可 → `cancelled`；完成/取消即释放工程师忙档。保修期 = 购买日 + 保修年限（超出判超保，提示付费维修）。
 
@@ -262,12 +269,13 @@ RAG_MCP_CWD=C:/Users/Cloud/Desktop/RAG项目/MODULAR-RAG-MCP-SERVER-main   # RAG
 ## 测试
 
 ```bash
-pytest                    # 107 项全部离线运行，不依赖 LLM/Embedding Key
+pytest                    # 148 项全部离线运行，不依赖 LLM/Embedding Key
 pytest tests/test_offline_services.py -q   # 工单生命周期/保修边界/档期冲突等纯逻辑
 pytest tests/test_session_isolation.py tests/test_chat_handler_session.py -q  # 会话隔离/写穿/重启恢复
+pytest tests/test_dream_policy.py tests/test_dream_service.py -q  # AutoDream 资格/幂等/降权/画像/任务锁
 ```
 
-覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原等。
+覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原、AutoDream 沉淀资格边界（≥5 会话且跨度 ≥24h）、增量回放幂等、偏好冲突降权、画像记忆去重轮换、任务锁与崩溃残留接管等。
 
 ## 主要页面
 

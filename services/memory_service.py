@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 
 PHONE_PATTERN = re.compile(r'1\d{10}')
 
-DEFAULT_IMPORTANCE = {'repair': 0.8, 'preference': 0.6, 'consult': 0.5}
+DEFAULT_IMPORTANCE = {'repair': 0.8, 'preference': 0.6, 'consult': 0.5, 'profile': 0.7}
+
+# 画像记忆向量去重阈值：新画像与现存画像余弦相似度高于该值时视为重复，跳过重写
+PROFILE_DEDUPE_SIMILARITY = 0.92
 
 
 class MemoryService:
@@ -90,6 +93,43 @@ class MemoryService:
         except Exception as e:
             logger.error(f"读取长期记忆失败：user={user_id}，{e}")
             return []
+
+    def upsert_profile_memory(self, user_id: str, content: str,
+                              source_session_id: str = 'dream') -> str:
+        """沉淀/刷新客户画像记忆（memory_type=profile，每人至多一条活跃）：
+        内容一致或向量相似(>=0.92)视为重复 → 返回 'duplicate'；
+        画像有实质变化 → 软删除旧画像后写新条 → 'superseded'；
+        无历史画像 → 直接写入 → 'new'。
+        """
+        try:
+            if not user_id or not content:
+                return 'invalid'
+            current = [m for m in self.list_memories(user_id, limit=50)
+                       if m.get('memory_type') == 'profile']
+            new_embedding = self._embed_or_none(content)
+            if current:
+                newest = current[0]  # 仓库按 created_at 倒序
+                if newest.get('content') == content:
+                    return 'duplicate'
+                old_embedding = newest.get('embedding')
+                if new_embedding is not None and old_embedding:
+                    similarity = self._cosine_similarity(new_embedding, old_embedding)
+                    if similarity >= PROFILE_DEDUPE_SIMILARITY:
+                        return 'duplicate'
+                for mem in current:
+                    self.memory_repo.delete_memory(mem['id'])
+            self.memory_repo.add_memory(
+                user_id=user_id,
+                content=content,
+                memory_type='profile',
+                importance=DEFAULT_IMPORTANCE['profile'],
+                embedding=new_embedding,
+                source_session_id=source_session_id,
+            )
+            return 'superseded' if current else 'new'
+        except Exception as e:
+            logger.error(f"沉淀画像记忆失败：user={user_id}，{e}")
+            return 'error'
 
     # ---------- 会话绑定 ----------
 

@@ -76,6 +76,18 @@ async def initialize_system():
     except Exception as e:
         logger.error(f"⚠️ 售后提醒调度服务异常: {e}")
 
+    # 启动 AutoDream 离线沉淀调度服务（回放老客户行为，沉淀可召回画像）
+    try:
+        logger.info("🌙 启动 AutoDream 离线沉淀调度服务...")
+        from services.dream_service import DreamService
+        dream_service = DreamService()
+        if dream_service.start_scheduler():
+            logger.info("✅ AutoDream 离线沉淀调度服务启动成功")
+        else:
+            logger.warning("⚠️ AutoDream 离线沉淀调度服务启动失败")
+    except Exception as e:
+        logger.error(f"⚠️ AutoDream 离线沉淀调度服务异常: {e}")
+
     logger.info("✅ 系统初始化完成！")
 
 def create_app() -> FastAPI:

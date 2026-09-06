@@ -25,6 +25,7 @@ from .order_service import OrderService
 from .handover_service import HandoverService
 from .user_behavior_service import UserBehaviorService
 from .recommendation_service import RecommendationService
+from .dream_service import DreamService
 
 __all__ = [
     'embed_input',
@@ -37,5 +38,6 @@ __all__ = [
     'OrderService',
     'HandoverService',
     'UserBehaviorService',
-    'RecommendationService'
+    'RecommendationService',
+    'DreamService'
 ]

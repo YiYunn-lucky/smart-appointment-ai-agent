@@ -18,6 +18,7 @@ from .order_repository import OrderRepository
 from .handover_repository import HumanHandoverRepository
 from .chat_session_repository import ChatSessionRepository
 from .user_memory_repository import UserMemoryRepository
+from .dream_checkpoint_repository import DreamCheckpointRepository
 
 __all__ = [
     'EngineerRepository',
@@ -27,5 +28,6 @@ __all__ = [
     'OrderRepository',
     'HumanHandoverRepository',
     'ChatSessionRepository',
-    'UserMemoryRepository'
+    'UserMemoryRepository',
+    'DreamCheckpointRepository'
 ]

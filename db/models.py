@@ -122,10 +122,25 @@ class UserMemory(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(String, nullable=False, index=True)  # 客户手机号
     content = Column(Text, nullable=False)  # 记忆文本（可注入 LLM 上下文）
-    memory_type = Column(String, nullable=False, default='consult')  # 'repair'/'consult'/'preference'
+    memory_type = Column(String, nullable=False, default='consult')  # 'repair'/'consult'/'preference'/'profile'
     importance = Column(Float, nullable=True, default=0.5)  # 重要度（0-1）
     embedding = Column(JSON, nullable=True)  # 语义向量（Embedding 可用时写入）
     source_session_id = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Integer, default=1)  # 软删除标记
+
+class DreamCheckpoint(Base):
+    __tablename__ = 'dream_checkpoints'
+    id = Column(Integer, primary_key=True)
+    user_id = Column(String, unique=True, nullable=False, index=True)  # 客户手机号（一人一行）
+    last_event_id = Column(Integer, default=0)  # 已回放的最近行为事件ID（幂等 checkpoint）
+    run_count = Column(Integer, default=0)  # 成功沉淀次数
+    total_events_processed = Column(Integer, default=0)  # 累计回放事件数
+    is_running = Column(Integer, default=0)  # 任务锁：1=处理中
+    running_started_at = Column(DateTime, nullable=True)  # 锁开始时间（超时自动接管）
+    last_run_at = Column(DateTime, nullable=True)  # 最近一次成功沉淀时间
+    last_status = Column(String, nullable=True)  # ok / no_new_events / error
+    last_error = Column(Text, nullable=True)  # 最近一次失败原因
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

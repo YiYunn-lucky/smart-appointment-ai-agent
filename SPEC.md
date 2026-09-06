@@ -46,6 +46,7 @@
 | 报修专员 | 预约 Agent：报修信息抽取、追问、工程师匹配、建单派单 | `agents/appointment_agent.py` |
 | 售后顾问 | 咨询 Agent：订单保修/工单进度查库短路 + RAG 知识问答 | `agents/consultant_agent.py` |
 | 用户行为 Agent | 行为记录、偏好置信度、回访判定与话术 | `agents/user_behavior_agent.py` |
+| AutoDream 沉淀 | 离线把老客户（≥5 会话且跨度 ≥24h）行为增量回放为画像：置信度累计、旧偏好减半降权、profile 记忆去重轮换 | `services/dream_service.py` + `dream_policy.py`（checkpoint：`dream_checkpoints`） |
 | 报修工单 | 一次上门维修的单据；单号 `AX+YYYYMMDD+当日2位序号`（`AX\d{12}`） | `repair_tickets` |
 | 工程师 | 上门维修员：姓名、品类技能文本（供向量匹配）、服务区域（城区） | `engineers` |
 | 忙档 / 排班 | 工程师时间占用；`status` ∈ busy / free，busy 绑工单 | `engineer_schedules` |
@@ -132,19 +133,21 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `engineer_service.py` | 8 名默认工程师种子、查询、`is_engineer_available`、区域/技能取数 |
 | `knowledge_service.py` | 默认 12 条知识、CRUD、FAISS 索引构建/重建、检索（top_k、分类过滤） |
 | `recommendation_service.py` | 后台定时任务：保修 30 天内到期提醒 + 维修完成满意度回访，写 `user_recommendations` |
+| `dream_service.py` | AutoDream 沉淀：资格扫描 → 增量回放 → 置信度/降权 → profile 记忆 → checkpoint 落库；守护线程定时 + `run_immediate_check` 手动触发（风格同 recommendation） |
+| `dream_policy.py` | AutoDream 纯策略函数：`activity_stats/is_eligible/replay_events/aggregate_profile/preference_upsert_deltas/stale_downweight_rows/build_profile_text`（离线可测） |
 | `user_behavior_service.py` | 行为/偏好/推荐的仓库转发与统计 |
 | `chat_session_service.py` | 会话快照读/写/绑定：`ChatSessionService(db_path)`（upsert 全量覆盖、load、bind_user、list_sessions） |
-| `memory_service.py` | 长期记忆读写与召回：`add_memory`（同用户同内容去重）、`recall(query, top_k=5)`（0.6 语义+0.3 时效+0.1 重要度，embedding 不可用自动降级）、`extract_phone`、`maybe_bind_session` |
+| `memory_service.py` | 长期记忆读写与召回：`add_memory`（同用户同内容去重）、`recall(query, top_k=5)`（0.6 语义+0.3 时效+0.1 重要度，embedding 不可用自动降级）、`extract_phone`、`maybe_bind_session`、`upsert_profile_memory`（画像记忆：内容一致或余弦 ≥0.92 视为重复跳过，否则软删旧画像后写入，至多一条活跃 profile） |
 | `text_embedding.py` | `embed_input`、`find_best_match_indices(query, candidates)`（IndexFlatL2 排序下标）；工程师向量缓存 `data/engineer_embeddings.pkl` |
 
 **DB 层**
 
 | 文件 | 内容 |
 | --- | --- |
-| `models.py` | 11 张表（§7） |
-| `db_router.py` | `DatabaseRouter`（属性 `engineers/knowledge/user_behavior/tickets/orders/handovers/chat_sessions/user_memories`，内部 `session_manager`）；另含 Engineer/Knowledge/UserBehaviorDBRouter 兼容类 |
-| `repositories/` | engineer / ticket / order / handover / knowledge / user_behavior / chat_session / user_memory 八个仓储 |
-| `base/interfaces.py` | 9 个抽象基类：BaseEngineer / BaseSchedule / BaseRepairTicket / BaseOrder / BaseHumanHandover / BaseKnowledge / BaseUserBehavior / BaseChatSession / BaseUserMemoryRepository |
+| `models.py` | 12 张表（§7） |
+| `db_router.py` | `DatabaseRouter`（属性 `engineers/knowledge/user_behavior/tickets/orders/handovers/chat_sessions/user_memories/dream_checkpoints`，内部 `session_manager`）；另含 Engineer/Knowledge/UserBehaviorDBRouter 兼容类 |
+| `repositories/` | engineer / ticket / order / handover / knowledge / user_behavior / chat_session / user_memory / dream_checkpoint 九个仓储 |
+| `base/interfaces.py` | 10 个抽象基类：BaseEngineer / BaseSchedule / BaseRepairTicket / BaseOrder / BaseHumanHandover / BaseKnowledge / BaseUserBehavior / BaseChatSession / BaseUserMemory / BaseDreamCheckpointRepository |
 | `base/session_manager.py` | `SessionManager(db_path)` 构造即 `create_all` + 会话工厂；**删库文件 = 零迁移重置** |
 
 **Config 层**：`constants.py`（`StateEnum` + `SharedState`）、`database.py`（`DatabaseConfig`，env `DATABASE_URL/DB_ECHO/...`）、`model_provider.py`（`create_chat_model/create_embedding_model`，env `LLM_*`/`EMBEDDING_*`，支持 openai/qwen/deepseek/zhipu/azure/openai-compatible）、`settings.py`、`time_config.py`（§6.6 唯一时间事实源）。
@@ -266,6 +269,16 @@ LLM 输出**纯 JSON**（禁止 markdown 代码块），字段契约（JSON Sche
 
 输入：投诉/转人工意图（调度分类为 complaint）→ `AgentRouter.route_to_complaint`：抽取诉求摘要（去意图词）→ `HandoverService.create(user_name?, user_phone?, issue_summary, ticket_id?=None)` 落库 → 回执话术「已为您登记转人工处理，售后专员将在 30 分钟内回电 {手机号}」→ 状态重置 CLASSIFY。投诉可能发生在无工单时，故 `human_handovers.ticket_id` 可空。
 
+### 5.7 AutoDream 沉淀契约（DreamService，M13）
+
+- **资格**（`dream_policy.is_eligible`）：`session_count ≥ 5 且 span_hours ≥ 24`；会话数 = 行为事件去重 session_id + 无有效会话ID行为（`default_session`/空）按隐式会话计 + 已绑定 `chat_sessions` 行 session_id 的并集；span = 全部活动时间戳（行为 created_at ∪ 会话 created_at）首末跨度（相对差，纯比较）；
+- **增量回放**（`replay_events`）：只取 `id > checkpoint.last_event_id` 的事件按时间升序处理——同批事件重复运行天然空集，**幂等**；checkpoint 在 `dream_checkpoints` 每人一行（`run_count`/`total_events_processed` 仅在 processed > 0 时累计）；
+- **任务锁**：进程内 per-user `threading.Lock` + 行级锁（`try_acquire_lock`：is_running=0 可抢；`running_started_at` 超 30 分钟视为崩溃残留自动接管；`release_lock` 归还）；
+- **置信度更新**：新事件逐条 `update_user_preference`（engineer_id ← 行为 engineer_id、product_type/fault_type ← action_data 的 product_type/fault_desc、time_period ← start_time 分上午/下午），同值 +1；
+- **冲突降权**（`stale_downweight_rows`）：某维度本周期新值**只出现单一值**时，同维度已存的其他值行整体 `confidence = max(1, conf // 2)`——被新值持续压制的旧偏好自动淡出（多值分散使用不降权）；
+- **画像记忆**（`aggregate_profile` → LLM 润色 → `MemoryService.upsert_profile_memory`）：聚合该客户**全量**行为成画像文本；LLM 不可用走 `build_profile_text` 确定性模板；内容一致或语义余弦 ≥0.92 视为重复跳过，实质变化才软删旧画像并写新条（memory_type=profile、重要度 0.7、每人至多一条活跃）；
+- **调度**：`start_scheduler` 守护线程每 60 分钟 `scan_and_consolidate`（扫描 `user_behaviors` 全客户，资格不足者零副作用跳过）；app.py 启动事件加载；`run_immediate_check()` 手动触发；LLM 润色通道可整体关闭（`profile_text_llm=None`，离线测试/无 Key 环境自动走模板）。
+
 ---
 
 ## 6. 确定性逻辑规范
@@ -326,11 +339,13 @@ days_left    = (warranty_end - now).days   # 超保时为 0
 
 `update_user_preference`：存在同 (user_id, preference_type, preference_value) 行则 confidence_score+1 并刷新 last_updated，否则新建（置信度 = 出现次数）。
 
+**写入方**：① 用户行为 Agent 实时行为（一次 +1）；② AutoDream 增量回放（M13，`DreamService`）对 checkpoint 之后的新事件逐条累计，并在单一新值窗口下对同维度旧值执行 `max(1, conf // 2)` 冲突降权（§5.7）——同一列两种写入路径共用仓库层，口径一致。
+
 ---
 
 ## 7. 数据模型与种子数据
 
-### 7.1 表结构（11 张，db/models.py 逐一对应）
+### 7.1 表结构（12 张，db/models.py 逐一对应）
 
 ```
 engineers ──1:N── engineer_schedules(busy 行 ticket_id ──)──► repair_tickets
@@ -340,6 +355,7 @@ knowledge_documents（独立，FAISS 索引内存构建）
 user_behaviors ──聚合──► user_preferences / user_recommendations（均按 user_id=手机号）
 chat_sessions（会话快照，按 session_id 单行覆盖写）
 user_memories（按 user_id=手机号 的长期记忆流水，软删除）
+dream_checkpoints（按 user_id 单行：AutoDream 回放断点 + 任务锁）
 ```
 
 | 表 | 字段 | 说明 |
@@ -354,7 +370,8 @@ user_memories（按 user_id=手机号 的长期记忆流水，软删除）
 | `user_preferences` | id, user_id, preference_type('engineer_id'/'time_period'/'product_type'/'fault_type'), preference_value, confidence_score(default 1), last_updated | 置信度累加（6.8） |
 | `user_recommendations` | id, user_id, recommendation_type('warranty_expiry_reminder'/'satisfaction_followup'/'maintenance_advice'), content(Text), engineer_id(FK 可空), is_sent(default 0), created_at, sent_at(可空) | 调度器/回访页产出 |
 | `chat_sessions` | id, session_id(unique,index), user_id(index,可空), state_value, appointment_slots(JSON), message_window(JSON), summary_text(Text), created_at, updated_at | 会话快照单行覆盖写：槽位/窗口/摘要全量 JSON；`user_id` 空 = 未识别客户 |
-| `user_memories` | id, user_id(index), content(Text), memory_type('repair'/'consult'/'preference'), importance(Float,默认0.5), embedding(JSON 向量,可空), source_session_id(可空), created_at, updated_at, is_active(默认1) | 长期记忆：repair 0.8 / preference 0.6 / consult 0.5；软删除；同用户同内容去重 |
+| `user_memories` | id, user_id(index), content(Text), memory_type('repair'/'consult'/'preference'/'profile'), importance(Float,默认0.5), embedding(JSON 向量,可空), source_session_id(可空), created_at, updated_at, is_active(默认1) | 长期记忆：repair 0.8 / preference 0.6 / consult 0.5 / profile 0.7；软删除；同用户同内容去重；profile 每人至多一条活跃（M13 轮换） |
+| `dream_checkpoints` | id, user_id(unique,index), last_event_id(default 0), run_count, total_events_processed, is_running(默认0), running_started_at(可空), last_run_at(可空), last_status(可空), last_error(Text,可空), created_at, updated_at | AutoDream 每人一行：回放断点（幂等）+ 任务锁（超 30 分钟接管） |
 
 ### 7.2 种子数据（启动自动播种，幂等：表非空即跳过；删 `data/` 即重置）
 
@@ -427,6 +444,9 @@ user_memories（按 user_id=手机号 的长期记忆流水，软删除）
 | 查询类意图（保修/进度）误判 | 纯函数短路先于一切 LLM 与二次分类 | consultation_processor.try_lookup |
 | 行为记录失败 | 仅日志告警，不影响主流程 | recorder / processor |
 | 回访话术 LLM 失败 | 确定性模板话术（含可约时段） | user_behavior_agent fallback |
+| AutoDream 画像润色 LLM 失败/无 Key | `dream_policy.build_profile_text` 确定性模板（数据较少给提示文案） | dream_service profile_text_llm |
+| AutoDream 任务锁冲突 | 返回 `locked` 跳过该客户本轮；崩溃残留（>30 分钟）自动接管 | dream_checkpoint_repository |
+| AutoDream 行级并发 | 进程内 per-user 线程锁串行，同用户不并行沉淀 | dream_service._thread_locks |
 | 派单冲突（后台操作） | 400 + 冲突说明，工单保留 pending 可改派 | api/ticket.py |
 | 非法状态流转 | 服务层白名单拒绝 → API 400 | ticket_service.update_status |
 | 滚动摘要 LLM 失败 | 截断拼接 + 「（早期对话截断）」标记，窗口正常滚动 | session_window.fallback_summary |
@@ -437,7 +457,7 @@ user_memories（按 user_id=手机号 的长期记忆流水，软删除）
 
 ## 10. 测试策略与工程约定
 
-### 10.1 测试设计（107 项全离线，零 API Key 依赖）
+### 10.1 测试设计（148 项全离线，零 API Key 依赖）
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -451,15 +471,18 @@ user_memories（按 user_id=手机号 的长期记忆流水，软删除）
 | `test_session_isolation.py` | 两会话行/ctx 互不串场、状态机值按会话还原、LRU 淘汰后按行重建、AppointmentAgent 上下文模式 |
 | `test_memory_binding.py` | 手机号提取/会话绑定、默认重要度与去重、软删除、无语义分召回降级（embedding 一律离线禁止） |
 | `test_chat_handler_session.py` | 入口链路：绑定/匿名、多轮窗口写穿、重启还原续谈、交错会话隔离、召回注入 ctx.recalled |
+| `test_dream_policy.py` | AutoDream 纯函数：会话/跨度资格边界（≥5 且 ≥24h）、增量回放幂等、画像聚合排序、偏好增量、冲突降权、模板文案 |
+| `test_dream_service.py` | AutoDream 集成：资格不足跳过、全量沉淀（置信度/画像记忆/checkpoint）、二次空跑不重复、增量续跑、漂移降权、LLM 通道与兜底、任务锁接管、批量扫描 |
 
 `conftest.py` 夹具：`FakeChatModel`（可 `prompt | llm` 组合的同步替身）、`temp_db_path`（独立临时库）、`tmp_engine`。会话类测试以 `monkeypatch` 将 `chat_handler` 单例指向临时库，并把运行时 Agent 图的分类流替换为假流（不触网）。
 
 ### 10.2 常用命令
 
 ```bash
-pytest                    # 全量 107 项离线
+pytest                    # 全量 148 项离线
 pytest tests/test_offline_services.py -q   # 确定性纯逻辑（状态机/保修/档期）
-pytest tests/test_session_isolation.py tests/test_chat_handler_session.py -q  # 会话隔离/写穿/重启还原
+pytest tests/test_dream_policy.py tests/test_dream_service.py -q  # AutoDream 策略/沉淀链路
+python services/dream_service.py     # 服务自测块：起调度器（演示入口，Ctrl+C 退出）
 python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦可演示核心链路）
 ```
 
@@ -473,4 +496,4 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦�
 
 ---
 
-*本文档锚点均已对照源码核实（M12 分层记忆后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*
+*本文档锚点均已对照源码核实（M13 AutoDream 后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*

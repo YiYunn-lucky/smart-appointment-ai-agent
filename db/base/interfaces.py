@@ -273,6 +273,16 @@ class BaseUserBehaviorRepository(ABC):
         """获取用户统计信息"""
         pass
 
+    @abstractmethod
+    def list_user_ids(self, limit: int = 1000) -> List[str]:
+        """列出有行为记录的客户ID（排除占位符，供离线沉淀扫描）"""
+        pass
+
+    @abstractmethod
+    def decay_preference_confidence(self, preference_id: int) -> bool:
+        """偏好冲突降权：置信度减半（下限 1），旧偏好逐渐淡出"""
+        pass
+
 
 class BaseChatSessionRepository(ABC):
     """
@@ -327,4 +337,40 @@ class BaseUserMemoryRepository(ABC):
     @abstractmethod
     def delete_memory(self, memory_id: int, soft_delete: bool = True) -> bool:
         """删除记忆（软删除）"""
+        pass
+
+
+class BaseDreamCheckpointRepository(ABC):
+    """
+    AutoDream 沉淀检查点数据访问抽象接口
+
+    每人一行：记录已回放到的行为事件ID（幂等）与任务锁状态，
+    保证离线沉淀可中断续跑、不重复累计。
+    """
+
+    @abstractmethod
+    def get_checkpoint(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """读取某客户沉淀检查点（无则返回 None）"""
+        pass
+
+    @abstractmethod
+    def get_or_create(self, user_id: str) -> Dict[str, Any]:
+        """读取检查点，不存在则创建（每人唯一）"""
+        pass
+
+    @abstractmethod
+    def try_acquire_lock(self, user_id: str, stale_minutes: int = 30) -> bool:
+        """抢占任务锁（is_running=0 才可抢占；超时视为崩溃残留自动接管）"""
+        pass
+
+    @abstractmethod
+    def release_lock(self, user_id: str, processed_events: int = 0,
+                     last_event_id: Optional[int] = None, status: str = "ok",
+                     error: Optional[str] = None) -> bool:
+        """释放任务锁并写回幂等 checkpoint（成功沉淀时累计计数）"""
+        pass
+
+    @abstractmethod
+    def list_checkpoints(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """检查点列表（最近更新在前）"""
         pass

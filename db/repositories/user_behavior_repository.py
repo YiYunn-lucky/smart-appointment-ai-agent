@@ -341,6 +341,26 @@ class UserBehaviorRepository(BaseUserBehaviorRepository):
                 for p in popularity
             ]
 
+    def list_user_ids(self, limit: int = 1000) -> List[str]:
+        """列出有行为记录的客户ID（排除占位符；供 AutoDream 离线沉淀扫描）"""
+        with self.session_manager.session_scope() as session:
+            rows = session.query(UserBehavior.user_id).filter(
+                UserBehavior.user_id.notin_(['guest', 'default_user', ''])
+            ).distinct().limit(limit).all()
+            return [r[0] for r in rows]
+
+    def decay_preference_confidence(self, preference_id: int) -> bool:
+        """偏好冲突降权：置信度减半（下限 1）——持续未被再次确认的旧偏好逐渐淡出"""
+        with self.session_manager.session_scope() as session:
+            row = session.query(UserPreference).filter(
+                UserPreference.id == preference_id
+            ).first()
+            if row is None:
+                return False
+            row.confidence_score = max(1, (row.confidence_score or 1) // 2)
+            row.last_updated = datetime.utcnow()
+            return True
+
     def _behavior_to_dict(self, behavior: UserBehavior) -> Dict[str, Any]:
         """将行为对象转换为字典"""
         return {

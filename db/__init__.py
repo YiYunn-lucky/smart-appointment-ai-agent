@@ -18,12 +18,13 @@ from .repositories import (
     HumanHandoverRepository,
     ChatSessionRepository,
     UserMemoryRepository,
+    DreamCheckpointRepository,
 )
 from .base import SessionManager
 from .models import (
     Base, Engineer, EngineerSchedule, RepairTicket, Order, HumanHandover,
     KnowledgeDocument, UserBehavior, UserPreference, UserRecommendation,
-    ChatSession, UserMemory
+    ChatSession, UserMemory, DreamCheckpoint
 )
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     'HumanHandoverRepository',
     'ChatSessionRepository',
     'UserMemoryRepository',
+    'DreamCheckpointRepository',
 
     # 基础设施
     'SessionManager',
@@ -60,5 +62,6 @@ __all__ = [
     'UserPreference',
     'UserRecommendation',
     'ChatSession',
-    'UserMemory'
+    'UserMemory',
+    'DreamCheckpoint'
 ]

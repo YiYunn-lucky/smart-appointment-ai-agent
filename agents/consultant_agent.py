@@ -78,12 +78,13 @@ class ConsultantAgent:
         # 会话上下文：客户背景（滚动摘要+召回 Top-5）注入生成提示，咨询后沉淀长期记忆
         ctx = self.session_context
         background = ctx.background_text(getattr(ctx, 'recalled', None)) if ctx is not None else ""
+        user_id = ctx.user_id if ctx is not None else None
 
         # 0. 工单进度/订单保修等查询意图先查库答复：命中即结束，
         #    避免"查询报修单进度"等请求在售后顾问二次分类中被误判为无关而转回死循环
         if self.consultation_processor.try_lookup(user_input):
             async for token in self.consultation_processor.process_consultation_stream(
-                user_input, self.session_id, background
+                user_input, self.session_id, background, user_id
             ):
                 yield token
             self._record_consultation_memory(user_input)
@@ -103,7 +104,7 @@ class ConsultantAgent:
 
         # 3. 处理咨询相关的请求
         async for token in self.consultation_processor.process_consultation_stream(
-            user_input, self.session_id, background
+            user_input, self.session_id, background, user_id
         ):
             yield token
 
