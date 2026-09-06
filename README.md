@@ -137,7 +137,7 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 | LLM | LangChain + OpenAI 兼容接口（可换 qwen/deepseek/zhipu/openai/azure；`main` 生成 + `fast` 结构化双通道分级） |
 | 向量检索 | FAISS（IndexFlatIP 语义检索 / IndexFlatL2 相似匹配） |
 | 存储 | SQLite + SQLAlchemy 2.0（声明式 ORM + 仓储模式） |
-| 测试 | pytest（离线可跑，不依赖 API Key） |
+| 测试 | pytest（193 项离线单测）+ tests/eval EDD 评测（30 例离线）+ scripts/run_quality_gate.py 本地门禁 |
 
 ## 项目结构
 
@@ -160,7 +160,8 @@ Web → API → Service → Repository → ORM（管理页等纯数据场景）
 ├── services/              # Services 层：engineer / ticket / order / handover / knowledge / mcp_rag_client / text_embedding / recommendation / user_behavior / chat_session / memory（含 memory_scoring）/ dream_service（含 dream_policy 纯策略）/ audit_service / permission_policy
 ├── db/                    # DB 层：models.py / db_router.py / repositories（含 chat_session / user_memory / audit_log）/ base（session_manager、interfaces）
 ├── config/                # 模型提供方（main/fast 分级通道）、常量、时区与营业时间
-├── tests/                 # 193 项离线测试
+├── tests/                 # 193 项离线单测 + eval/（EDD 评测 30 例：单步/组件/端到端）
+├── scripts/               # 本地质量门禁 run_quality_gate.py（pytest + EDD 双闸）
 └── data/                  # SQLite 库与向量索引（运行时生成，已 gitignore）
 ```
 
@@ -281,9 +282,13 @@ pytest tests/test_session_isolation.py tests/test_chat_handler_session.py -q  # 
 pytest tests/test_dream_policy.py tests/test_dream_service.py -q  # AutoDream 资格/幂等/降权/画像/任务锁
 pytest tests/test_tool_registry.py tests/test_model_tier.py -q  # 主管工具化选择/规划复盘/模型分级通道装配
 pytest tests/test_audit_logging.py tests/test_permission_policy.py -q  # 审计落库/幂等键治理/风险分级与白名单同源
+python tests/eval/run_eval.py        # EDD 评测：单步 19 + 组件 6 + 端到端 5（成功率/P95/步数/token，全离线）
+python scripts/run_quality_gate.py   # 质量门禁：pytest 193 + EDD 30 例 100% 通过才算绿（本地执行）
 ```
 
-覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原、AutoDream 沉淀资格边界（≥5 会话且跨度 ≥24h）、增量回放幂等、偏好冲突降权、画像记忆去重轮换、任务锁与崩溃残留接管、主管工具注册表（类别↔工具映射/未知兜底/清单注入提示词）、模型分级（fast 未配置透明回退/独立覆盖/分类·判定·抽取接 fast、生成接 main）、审计落库与过滤、幂等键治理（成功占位重放短路/失败不占位可重试）、服务层写路径审计插桩、风险分级矩阵（read/confirm/write × 工具白名单与注册表同源）等。
+覆盖：分类枚举与兜底、信息抽取契约、工单状态机白名单、档期冲突与释放、保修期边界、偏好置信度、回访判定（30 天）、会话窗口滚动、长期记忆召回打分、多会话隔离、绑定/写穿/重启还原、AutoDream 沉淀资格边界（≥5 会话且跨度 ≥24h）、增量回放幂等、偏好冲突降权、画像记忆去重轮换、任务锁与崩溃残留接管、主管工具注册表（类别↔工具映射/未知兜底/清单注入提示词）、模型分级（fast 未配置透明回退/独立覆盖/分类·判定·抽取接 fast、生成接 main）、审计落库与过滤、幂等键治理（成功占位重放短路/失败不占位可重试）、服务层写路径审计插桩、风险分级矩阵（read/confirm/write × 工具白名单与注册表同源）等；另 `tests/eval/` 三层 EDD 评测：**单步**（19 例纯函数确定性断言：风险档位/工单号格式/保修口径/召回打分归一/幂等键…）、**组件**（6 例真实对象协作：主管规划审计/会话重启还原/滚动摘要降级/记忆绑定/派单冲突/资格边界）、**端到端**（5 例走真实会话链路：建单闭环/保修查询短路/投诉转人工/提示注入拦截/双会话隔离），以脚本替身 LLM 离线驱动真实 Agent 图，E2E 按场景重置计数器，LLM 调用次数精确命中步数预算（2/1/1/1/5），并度量输入字符估算 token 成本。
+
+质量门禁说明：门禁为本地脚本（`scripts/run_quality_gate.py`），两道闸门——① pytest 193 项单测；② EDD 30 例须 100% 通过。评测全程离线：临时沙箱目录隔离默认库（业务代码零改动）、脚本替身替换模型工厂（等价生产装配）、Embedding 工厂强制不可用走语义降级路径；沙箱自建自清，重复执行结果确定。
 
 ## 主要页面
 

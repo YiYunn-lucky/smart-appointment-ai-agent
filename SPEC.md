@@ -4,7 +4,7 @@
 | --- | --- |
 | 文档版本 | v2.0（按新大纲重构，与代码逐条核对） |
 | 编写日期 | 2026-09-03 |
-| 适用版本 | 当前 master（M15 权限与安全治理完成后） |
+| 适用版本 | 当前 master（M16 EDD 评测与质量门禁完成后） |
 | 系统名称 | 安居家电售后智能客服 + 上门报修预约 Agent |
 | 阅读建议 | README 面向使用者，PROJECT_SUMMARY 面向汇报，本文档面向**开发与讲解**，所有锚点均可在源码中对应 |
 
@@ -34,7 +34,7 @@
 | LLM | LangChain，OpenAI 兼容工厂（`config/model_provider.py`：聊天与 Embedding 可分厂商；聊天模型 main/fast 双通道分级，见 §3.1 模型分级） |
 | 向量 | FAISS：`IndexFlatIP`（知识语义检索）、`IndexFlatL2`（工程师技能相似排序） |
 | 存储 | SQLite 单文件 + SQLAlchemy 2.0（声明式 ORM + Repository 仓储 + 手工注入 db_path） |
-| 测试 | pytest + pytest-asyncio，193 项全离线（零外部 API） |
+| 测试 | pytest + pytest-asyncio，193 项单测全离线（零外部 API）；另有 `tests/eval/` EDD 评测 30 例（单步 19 + 组件 6 + 端到端 5，脚本替身 LLM 离线驱动），`scripts/run_quality_gate.py` 本地双闸门 |
 
 ---
 
@@ -482,7 +482,7 @@ audit_logs（操作审计流水：后台写面统一落库 + 幂等键治理）
 
 ## 10. 测试策略与工程约定
 
-### 10.1 测试设计（193 项全离线，零 API Key 依赖）
+### 10.1 测试设计（193 项单测 + 30 例 EDD 评测，全离线，零 API Key 依赖）
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -505,14 +505,28 @@ audit_logs（操作审计流水：后台写面统一落库 + 幂等键治理）
 
 `conftest.py` 夹具：`FakeChatModel`（固定内容离线替身）、`temp_db_path`（独立临时库）、`tmp_engine`（内存建表验证）。会话/服务类测试以临时库直连构造 `AgentSessionRegistry`/Service，并用 `monkeypatch` 把 `chat_handler._registry/_memory_service` 指向临时库实例、`text_embedding.embed_input` 换成离线替身（不触网、不触 LLM）。
 
+**EDD 评测（M16，`tests/eval/`）**：三层真实链路评测，全部离线——
+
+| 文件 | 覆盖 |
+| --- | --- |
+| `base.py` | 离线替身基建：`SeqFake`（脚本队列替身，耗尽钉住末条，接口面与 ChatOpenAI 对齐：invoke/ainvoke/stream/astream/`__call__`，兼容 LCEL 链）、`LLMCounter`（调用次数 + 输入字符度量，token ≈ 字符/2）、`ModelHub`（按 Agent 模块构造位分发角色的模型工厂替换，等价于生产 main/fast 装配、仅换模型来源） |
+| `cases_step.py`（19 例） | 单步确定性断言：风险档位/HTTP 分级/白名单同源/工单号格式/服务窗口/保修口径/令牌提取/窗口滚动/召回打分归一/幂等键等 |
+| `cases_component.py`（6 例） | 真实对象协作：主管规划与审计、会话写穿与重启还原、窗口滚动摘要降级、记忆召回去重与会话绑定、档期冲突/换人/释放、AutoDream 资格边界 |
+| `cases_e2e.py`（5 例） | 端到端真实会话链路（走 `chat_handler.ProcessUserInput_stream` + `AgentSessionRegistry` 真实建图）：报修闭环建单、保修查询短路、投诉转人工、提示注入拦截零副作用、双会话交错隔离 |
+| `run_eval.py` | 评测编排：CWD 切沙箱临时目录隔离默认库、monkeypatch embedding 工厂抛错强制走语义降级路径、按场景重置计数器与角色脚本、输出成功率/P95 耗时/步数预算/token 成本估算、失败打印 traceback、沙箱自清 |
+
+评测口径：步数预算 = LLM 调用次数（脚本替身按角色分发，多会话按构造位取模归组，保证跨会话分组不变）；端到端每场景独立 `session_id` 并重置计数器，LLM 调用次数即该场景步数（主管分类/槽位抽取/话术生成逐次计费），E2E 预算精确命中（2/1/1/1/5）。
+
 ### 10.2 常用命令
 
 ```bash
-pytest                    # 全量 193 项离线
+pytest                    # 全量 193 项单测离线
 pytest tests/test_offline_services.py -q   # 确定性纯逻辑（状态机/保修/档期）
 pytest tests/test_dream_policy.py tests/test_dream_service.py -q  # AutoDream 策略/沉淀链路
 pytest tests/test_tool_registry.py tests/test_model_tier.py -q  # 主管工具化/模型分级
 pytest tests/test_audit_logging.py tests/test_permission_policy.py -q  # 权限治理：审计/幂等键/风险分级
+python tests/eval/run_eval.py        # EDD 评测：单步 19 + 组件 6 + 端到端 5，成功率/P95/步数/token（离线）
+python scripts/run_quality_gate.py   # 质量门禁（本地双闸：pytest 193 + EDD 30 例 100% 通过）
 python services/dream_service.py     # 服务自测块：起调度器（演示入口，Ctrl+C 退出）
 python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦可演示核心链路）
 ```
@@ -524,8 +538,9 @@ python -m uvicorn app:app --host 127.0.0.1 --port 8001   # 启动（无 Key 亦�
 - **时间口径**：一律 `TimeConfig.naive_now()`；`parse_datetime` 返回 naive（§6.6）；
 - **删库即重置**：`data/smart_appointment.db` + 索引文件删除后重启即重建全部种子（旧库备份为 `.db.bak`）；
 - **会话**：按 `session_id` 隔离（每会话独立 Agent 图 + 写穿 `chat_sessions`），无登录体系、身份以手机号绑定为准；工单/订单按手机号归属（M12 起，旧"全局单进程会话"描述已废弃）；
-- **审计与幂等键（M15）**：写 API 统一经 `api/audit_guard.py` 带键审计——`result=ok` 记录占用 `idem_key` 唯一索引（同键重放短路返回），失败记录**不占键**（键并入 detail 可追溯）；服务层审计回调失败只告警，绝不阻断业务；风险表 `TOOL_RISK_TABLE` 是唯一字面量源，改注册表工具必须同步改表（测试兜底）。
+- **审计与幂等键（M15）**：写 API 统一经 `api/audit_guard.py` 带键审计——`result=ok` 记录占用 `idem_key` 唯一索引（同键重放短路返回），失败记录**不占键**（键并入 detail 可追溯）；服务层审计回调失败只告警，绝不阻断业务；风险表 `TOOL_RISK_TABLE` 是唯一字面量源，改注册表工具必须同步改表（测试兜底）；
+- **EDD 评测与门禁（M16）**：评测不引第三方托管 CI（不上传 .github，历史决定），质量门禁本地执行 `python scripts/run_quality_gate.py`——闸门一 pytest 193 项单测、闸门二 `tests/eval/run_eval.py` EDD 30 例（须 100% 通过），任一失败非零退出；评测离线手段：CWD 沙箱切临时目录隔离默认 sqlite 库（业务代码零改动）+ `ModelHub` 替换三个 Agent 模块 `create_chat_model`（等价生产 main/fast 装配）+ monkeypatch embedding 工厂抛错强制语义降级路径；沙箱目录自建自清，重复执行结果确定。
 
 ---
 
-*本文档锚点均已对照源码核实（M15 权限与安全治理后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*
+*本文档锚点均已对照源码核实（M16 EDD 评测与质量门禁后版本）；技术讲解请配合 README（使用）与 PROJECT_SUMMARY（汇报）阅读。*
