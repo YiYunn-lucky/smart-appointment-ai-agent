@@ -11,7 +11,7 @@ Agent 会话运行时注册表
 import asyncio
 import logging
 from collections import OrderedDict
-from typing import Dict, Optional
+from typing import Optional
 
 from agents.task_classification_agent import TaskClassificationAgent
 from agents.appointment_agent import AppointmentAgent

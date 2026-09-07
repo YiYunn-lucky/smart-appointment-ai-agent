@@ -404,6 +404,12 @@
                 <i class="fas fa-trash-alt"></i>
                 清空对话
             </a>
+            <a class="nav-btn" id="reset-btn" href="javascript:void(0)"
+               style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);"
+               title="清空机器人记忆并开启全新会话（避免上次未完成的报修影响本次提问）">
+                <i class="fas fa-plus-circle"></i>
+                新会话
+            </a>
         </div>
 
         <!-- 聊天内容区域 -->
@@ -458,6 +464,7 @@
     const chatForm = document.getElementById('chat-form');
     const userInput = document.getElementById('user-input');
     const clearBtn = document.getElementById('clear-btn');
+    const resetBtn = document.getElementById('reset-btn');
     const typingIndicator = document.getElementById('typing-indicator');
     let lastBotBubble = null;
 
@@ -652,6 +659,28 @@
         lastBotBubble = null;
 
         // 聚焦输入框
+        userInput.focus();
+    }
+
+    resetBtn.onclick = async function() {
+        // 新会话：通知后端清空该会话的槽位/窗口/摘要并回到分类态，然后换新会话 ID
+        const oldSid = localStorage.getItem('chat_session_id');
+        if (oldSid) {
+            try {
+                await fetch('/chat/reset', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({session_id: oldSid})
+                });
+            } catch (e) {
+                console.error('重置会话失败（前端已切换新会话，不影响使用）:', e);
+            }
+            localStorage.removeItem('chat_session_id');
+        }
+        const welcomeMessage = chatBox.querySelector('.message.bot').cloneNode(true);
+        chatBox.innerHTML = '';
+        chatBox.appendChild(welcomeMessage);
+        lastBotBubble = null;
         userInput.focus();
     }
 

@@ -6,7 +6,6 @@ M13 AutoDream 沉淀：策略纯函数测试（全离线，不触网）
 """
 
 from datetime import datetime, timedelta
-import pytest
 
 from services.dream_policy import (
     MIN_SESSIONS,

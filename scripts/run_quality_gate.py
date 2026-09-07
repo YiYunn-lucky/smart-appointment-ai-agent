@@ -57,7 +57,8 @@ def main() -> int:
     print(f"  单元测试  : {'PASS' if gate1_ok else 'FAIL'}（{unit_passed} passed，离线）")
     print(f"  EDD 评测  : {'PASS' if gate2_ok else 'FAIL'}（{total} 例，成功率 {success_rate}%，离线）")
     ok = gate1_ok and gate2_ok
-    print(f"  最终判定  : {'全部通过 ✅' if ok else '存在失败 ❌'}")
+    # 不用 emoji/特殊符号：Windows GBK 控制台会抛 UnicodeEncodeError 导致假红
+    print(f"  最终判定  : {'全部通过' if ok else '存在失败'}")
     return 0 if ok else 1
 
 

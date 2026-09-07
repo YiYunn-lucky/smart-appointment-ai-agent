@@ -9,7 +9,6 @@ M14 主管工具化：工具注册表与主管规划（全离线，不触网不�
 import pytest
 
 from agents.supervisor.tool_registry import (
-    DEFAULT_TOOL_DEFS,
     SupervisorToolRegistry,
     ToolSpec,
 )

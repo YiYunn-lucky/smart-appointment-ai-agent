@@ -2,7 +2,7 @@
 
 import numpy as np
 import faiss
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict
 from db.db_router import DatabaseRouter
 from .text_embedding import embed_input
 import logging

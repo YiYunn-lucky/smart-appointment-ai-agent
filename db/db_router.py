@@ -11,7 +11,6 @@ from .repositories import (
     DreamCheckpointRepository,
     AuditLogRepository,
 )
-from typing import Optional
 
 
 class DatabaseRouter:

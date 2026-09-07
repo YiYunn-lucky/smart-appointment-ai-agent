@@ -7,7 +7,6 @@
 3. 区域软偏好：地址命中 service_region 的工程师优先，无命中回退全量
 """
 
-import re
 from typing import Optional, Dict, Any, Callable, List
 from datetime import datetime, timedelta
 

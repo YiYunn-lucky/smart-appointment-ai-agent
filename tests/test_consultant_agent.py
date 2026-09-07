@@ -87,10 +87,48 @@ class TestLookupPureFunctions:
         assert "未查询到" in answer
         assert "19900000000" in answer
 
-    def test_pure_phone_without_intent_returns_none(self):
-        """只有手机号、无保修/订单关键词 → 走 RAG，不触发查表"""
+    def test_phone_plus_ticket_intent_returns_tickets(self):
+        """手机号 + 报修工单类意图（报修订单/报修单/工单进度）→ 查名下工单而非购买订单"""
         processor = self._processor()
-        assert processor._try_lookup_answer("帮我看看 13800138000") is None
+        for question in ["帮我查一下 13800138000 的报修订单",
+                         "13800138000 名下有哪些报修单",
+                         "查一下我 13800138000 的工单进度",
+                         "13800138000 的报修单现在什么进度了"]:
+            answer = processor._try_lookup_answer(question)
+            assert answer is not None, question
+            assert "报修工单" in answer, question  # 命中的是工单答复而非购买订单保修
+            assert "13800138000" in answer
+
+    def test_unknown_phone_ticket_intent_returns_guidance(self):
+        """手机号 + 工单意图但名下无工单 → 引导核对/热线，而非购买订单答复"""
+        processor = self._processor()
+        answer = processor._try_lookup_answer("帮我查一下 19911112222 的报修订单")
+        assert answer is not None
+        assert "报修工单" in answer
+        assert "400-820-9000" in answer
+
+    def test_pure_phone_message_returns_overview(self):
+        """消息仅含手机号（无保修/订单关键词）→ 按名下订单+工单给总览答复"""
+        processor = self._processor()
+        answer = processor._try_lookup_answer("帮我看看 13800138000")
+        assert answer is not None
+        assert "13800138000" in answer
+        # 有记录时给出订单总览；空库时给引导 —— 两者都不走 RAG 兜底
+        assert any(token in answer for token in ["名下", "未查询到", "记录"])
+
+    def test_unknown_pure_phone_returns_guidance(self):
+        """仅手机号且名下无任何记录 → 引导核对手机号/热线，而非崩溃"""
+        processor = self._processor()
+        answer = processor._try_lookup_answer("19911112222")
+        assert answer is not None
+        assert "19911112222" in answer
+        assert "400-820-9000" in answer
+
+    def test_no_lookup_trigger_returns_none(self):
+        """既无手机号也无单号、非查询语句 → None，交由上层 RAG"""
+        processor = self._processor()
+        for question in ["好的，知道了", "麻烦帮我上门看看", "还有别的办法吗"]:
+            assert processor._try_lookup_answer(question) is None, question
 
     def test_general_after_sales_question_returns_none(self):
         """普通售后咨询（不涉单号/保修查询）→ None，交由 RAG"""

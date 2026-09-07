@@ -25,6 +25,8 @@ class ConsultantAgent:
         self.unrelated_callback = None
         # 会话上下文（由 AgentSessionRegistry 挂载；非空时注入客户背景并沉淀长期记忆）
         self.session_context = None
+        # unrelated 转回防抖：supervisor 转回再分类仍判咨询时置位，消费后不再二次转回
+        self._suppress_not_consultation_once = False
         
         # 初始化LLM：main 通道（知识问答生成）+ fast 通道（咨询相关性判定）
         self.llm = self._initialize_llm()
@@ -54,7 +56,7 @@ class ConsultantAgent:
         print("售后顾问已启动（数据库RAG模式）")
         return self
 
-    async def __aexit__(self, exc_type, exc, tb):
+    async def __aexit__(self, _exc_type, _exc, _tb):
         """异步上下文管理器出口"""
         pass
 
@@ -98,6 +100,12 @@ class ConsultantAgent:
 
         # 1. 检查是否与咨询相关
         is_consultation = await self.consultation_classifier.is_consultation_related(user_input)
+
+        # 转回防抖：supervisor 转回再分类仍指向咨询时，忽略本侧误判的"非咨询"，按咨询继续处理
+        suppress = self._suppress_not_consultation_once
+        self._suppress_not_consultation_once = False
+        if not is_consultation and suppress:
+            is_consultation = True
 
         if not is_consultation:
             # 2. 处理与咨询无关的请求

@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
-from api.chat_handler import ProcessUserInput_stream
+from api.chat_handler import ProcessUserInput_stream, reset_session
 
 # 创建logger实例
 logger = logging.getLogger(__name__)
@@ -23,6 +23,9 @@ router = APIRouter(tags=["Web界面"])
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
+
+class ResetRequest(BaseModel):
+    session_id: str
 
 @router.get("/", response_class=HTMLResponse, summary="主页")
 async def read_root(request: Request):
@@ -58,6 +61,12 @@ async def chat_endpoint(chat: ChatRequest):
         media_type="text/plain",
         headers={"X-Session-Id": session_id},
     )
+
+@router.post("/chat/reset", summary="重置会话状态")
+async def chat_reset_endpoint(chat: ResetRequest):
+    """清空会话的预约槽位/窗口/摘要并回到分类态（前端"新会话"按钮使用）"""
+    ok = await reset_session(chat.session_id)
+    return {"ok": ok, "message": "会话已重置" if ok else "重置失败"}
 
 @router.get("/knowledge", response_class=HTMLResponse, summary="知识库管理页面")
 async def knowledge_page(request: Request):

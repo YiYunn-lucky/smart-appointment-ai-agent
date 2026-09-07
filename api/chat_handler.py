@@ -84,3 +84,26 @@ async def ProcessUserInput_stream(user_input: str, session_id: str = None):
                 registry.persist(runtime)
             except Exception as e:
                 logger.error(f"会话写穿失败（不影响已输出内容）：{session_id}，{e}")
+
+
+async def reset_session(session_id: str) -> bool:
+    """
+    重置会话状态：清空预约槽位/窗口/摘要/客户绑定，状态回到分类态。
+
+    用于前端"新会话"：避免上次未收尾的报修流程污染后续对话
+    （如先报修空调后改口问风扇，旧槽位导致解析复读旧品类）。
+    """
+    if not session_id:
+        return False
+    registry = _get_registry()
+    runtime = await registry.get(session_id)
+    async with runtime.lock:
+        ctx = runtime.ctx
+        ctx.appointment_slots = {}
+        ctx.window_messages = []
+        ctx.summary_text = ""
+        ctx.user_id = None
+        ctx.recalled = None
+        runtime.agent.state_manager.reset_to_classify()
+        registry.persist(runtime)
+    return True

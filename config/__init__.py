@@ -1,17 +1,1 @@
-"""
-配置模块
-
-提供应用程序所需的常量和基本配置
-"""
-
-from .constants import StateEnum, SharedState
-from .settings import settings
-
-__all__ = [
-    # 常量和状态
-    'StateEnum',
-    'SharedState',
-
-    # 基本设置
-    'settings'
-]
+"""配置包:常量与运行时配置见 constants / model_provider / time_config(不再集中再导出)。"""

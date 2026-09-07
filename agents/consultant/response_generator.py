@@ -4,7 +4,7 @@
 负责生成AI响应内容
 """
 
-from typing import Dict, Any, AsyncGenerator
+from typing import AsyncGenerator
 from langchain_core.language_models.chat_models import BaseChatModel
 from .prompt_builder import PromptBuilder
 
@@ -23,7 +23,7 @@ class ResponseGenerator:
             prompt = self.prompt_builder.build_consultation_prompt(user_input, knowledge_docs, background)
             response = await self.llm.ainvoke([{"role": "user", "content": prompt}])
             return response.content
-        except Exception as e:
+        except Exception:
             return f"抱歉，处理您的问题时出现了错误。请稍后再试。"
 
     async def generate_response_stream(self, user_input: str, knowledge_docs: list,

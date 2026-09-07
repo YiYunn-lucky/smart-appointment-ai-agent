@@ -155,7 +155,7 @@ DB 层      db/                  ORM 模型 / 仓储 / 会话
 | `base/interfaces.py` | 11 个抽象基类：BaseEngineer / BaseSchedule / BaseRepairTicket / BaseOrder / BaseHumanHandover / BaseKnowledge / BaseUserBehavior / BaseChatSession / BaseUserMemory / BaseDreamCheckpoint / BaseAuditLogRepository |
 | `base/session_manager.py` | `SessionManager(db_path)` 构造即 `create_all` + 会话工厂；**删库文件 = 零迁移重置** |
 
-**Config 层**：`constants.py`（`StateEnum` + `SharedState`）、`database.py`（`DatabaseConfig`，env `DATABASE_URL/DB_ECHO/...`）、`model_provider.py`（`create_chat_model(temperature, tier)/create_embedding_model`，env `LLM_*`/`EMBEDDING_*`，支持 openai/qwen/deepseek/zhipu/azure/openai-compatible；**模型分级（M14）**：`tier ∈ main/fast`——fast 通道读 `LLM_FAST_MODEL`/`MODEL_FAST_PROVIDER`（Azure 为 `AZURE_FAST_DEPLOYMENT`），未配置透明回退 main 配置；`resolve_channel/channel_label` 纯函数供解析与日志）、`settings.py`、`time_config.py`（§6.6 唯一时间事实源）。
+**Config 层**：`constants.py`（`StateEnum` + `SharedState`）、`model_provider.py`（`create_chat_model(temperature, tier)/create_embedding_model`，env `LLM_*`/`EMBEDDING_*`，支持 openai/qwen/deepseek/zhipu/azure/openai-compatible；**模型分级（M14）**：`tier ∈ main/fast`——fast 通道读 `LLM_FAST_MODEL`/`MODEL_FAST_PROVIDER`（Azure 为 `AZURE_FAST_DEPLOYMENT`），未配置透明回退 main 配置；`resolve_channel/channel_label` 纯函数供解析与日志）、`time_config.py`（§6.6 唯一时间事实源）。（曾有过 `database.py`/`settings.py` 空壳配置模块，零引用，已随死代码清理删除；数据库连接由 `SessionManager(db_path)` 直管。）
 
 **Web 层**：`web/routes.py` + `templates/`（index / tickets / engineers / engineer_schedules / knowledge_management / follow_ups / audit_logs）+ `static/styles.css`。`api/chat_handler.py` 经 `AgentSessionRegistry` 按 `session_id` 取/建会话运行时（每会话独立 Agent 图 + `SessionContext`），处理期持 per-session 锁，结束时写穿 `chat_sessions`（详见 §4.1）；前端用 `localStorage` 固定 `session_id`。
 
@@ -441,7 +441,7 @@ audit_logs（操作审计流水：后台写面统一落库 + 幂等键治理）
 
 ### 8.4 兼容遗留端点说明（如实披露）
 
-`api/core/response_models.py` 中 `AppointmentRequest{user_id, service_type, preferred_time, notes}`、`AppointmentResponse`、`ConsultationRequest/Response`、`TaskClassificationRequest/Response` 等仍保留**改造前的预约语义词**（service_type/preferred_time…）。主聊天链路不经过它们（走 `/chat/stream`），仅 `/api/task|consultation|appointment` 三个演示入口使用。如需彻底对齐可后续替换为报修语义模型。
+`api/core/response_models.py` 中 `AppointmentRequest{user_id, service_type, preferred_time, notes}`、`ConsultationRequest`、`TaskClassificationRequest` 仍保留**改造前的预约语义词**（service_type/preferred_time…）。主聊天链路不经过它们（走 `/chat/stream`），仅 `/api/task|consultation|appointment` 三个演示入口使用；`AppointmentResponse`、`ConsultationResponse`、`UserBehaviorRequest/Response`、`TaskClassificationResponse` 等零引用类已随死代码清理删除。如需彻底对齐可后续替换为报修语义模型。
 
 ---
 

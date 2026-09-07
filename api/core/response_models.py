@@ -28,15 +28,6 @@ class AppointmentRequest(BaseModel):
     notes: Optional[str] = None
 
 
-class AppointmentResponse(BaseModel):
-    appointment_id: str
-    user_id: str
-    service_type: str
-    scheduled_time: str
-    status: str
-    notes: Optional[str] = None
-
-
 # 咨询相关模型
 class ConsultationRequest(BaseModel):
     user_id: str
@@ -44,35 +35,7 @@ class ConsultationRequest(BaseModel):
     category: Optional[str] = None
 
 
-class ConsultationResponse(BaseModel):
-    consultation_id: str
-    question: str
-    answer: str
-    category: Optional[str] = None
-
-
-# 用户行为相关模型
-class UserBehaviorRequest(BaseModel):
-    user_id: str
-    action: str
-    context: Optional[Dict[str, Any]] = None
-
-
-class UserBehaviorResponse(BaseModel):
-    user_id: str
-    action: str
-    timestamp: datetime
-    context: Optional[Dict[str, Any]] = None
-
-
 # 任务分类相关模型
 class TaskClassificationRequest(BaseModel):
     text: str
     context: Optional[Dict[str, Any]] = None
-
-
-class TaskClassificationResponse(BaseModel):
-    text: str
-    category: str
-    confidence: float
-    reasoning: Optional[str] = None

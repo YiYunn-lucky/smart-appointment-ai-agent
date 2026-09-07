@@ -468,7 +468,12 @@
             <h2><i class="fas fa-brain"></i> 安居家电 · 售后知识库管理</h2>
             <p>管理家电售后知识库（保修政策 / 收费标准 / 故障排查 / 服务时间），测试智能检索功能</p>
         </div>
-        
+        <div style="display: flex; gap: 10px; padding: 12px 30px; background: rgba(255,255,255,0.8); border-bottom: 1px solid rgba(0,0,0,0.05);">
+            <a href="/" class="btn btn-secondary" style="text-decoration: none; margin-right: 0;">
+                <i class="fas fa-home"></i> 返回客服主界面
+            </a>
+        </div>
+
         <div class="content">
             <div class="nav-tabs">
                 <button class="nav-tab active" onclick="showTab('overview')">📊 概览</button>
@@ -976,34 +981,5 @@
         }
     </script>
     </div>
-</body>
-</html>
-            const alertClass = type === 'success' ? 'alert-success' : 'alert-error';
-            const alertHtml = `<div class="alert ${alertClass}">${message}</div>`;
-            
-            if (containerId) {
-                document.getElementById(containerId).innerHTML = alertHtml;
-            } else {
-                // 在页面顶部显示
-                const container = document.querySelector('.container');
-                const alertDiv = document.createElement('div');
-                alertDiv.innerHTML = alertHtml;
-                container.insertBefore(alertDiv, container.firstChild);
-                
-                // 3秒后自动消失
-                setTimeout(() => {
-                    alertDiv.remove();
-                }, 3000);
-            }
-        }
-        
-        // 点击模态框外部关闭
-        window.onclick = function(event) {
-            const modal = document.getElementById('editModal');
-            if (event.target === modal) {
-                closeEditModal();
-            }
-        }
-    </script>
 </body>
 </html>

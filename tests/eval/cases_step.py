@@ -8,7 +8,6 @@ EDD 单步评测用例（M16）：纯函数 / 单一服务调用的确定性断�
 import re
 from datetime import timedelta
 from pathlib import Path
-from typing import Optional
 
 from agents.appointment import InputParser
 from agents.appointment.appointment_processor import AppointmentProcessor

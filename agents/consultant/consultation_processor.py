@@ -7,7 +7,7 @@
 """
 
 import re
-from typing import AsyncGenerator, Dict, Any, Optional
+from typing import AsyncGenerator, Optional
 from .knowledge_retriever import KnowledgeRetriever
 from .consultation_classifier import ConsultationClassifier
 from .response_generator import ResponseGenerator
@@ -19,7 +19,8 @@ class ConsultationProcessor:
     TICKET_PATTERN = re.compile(r"AX\d{10,14}", re.IGNORECASE)
     PHONE_PATTERN = re.compile(r"1\d{10}")
     ORDER_INTENT_KEYWORDS = ("保修", "在保", "过保", "超保", "质保", "出保", "保内", "保外", "订单", "还保")
-    TICKET_INTENT_KEYWORDS = ("工单", "进度", "报修单", "单号")
+    # 报修工单类意图词（先于保修词判定："报修订单/维修单"含"订单"却指工单）
+    TICKET_INTENT_KEYWORDS = ("报修单", "维修单", "报修订单", "维修订单", "工单", "进度", "单号")
     TICKET_STATUS_LABELS = {
         'pending': '待派单',
         'assigned': '已派单，工程师将联系您',
@@ -109,13 +110,28 @@ class ConsultationProcessor:
                 return self._build_ticket_status_answer(ticket_no)
 
             phone = self._extract_phone(user_input)
-            if phone and any(keyword in user_input for keyword in self.ORDER_INTENT_KEYWORDS):
-                return self._build_warranty_answer(phone)
+            if phone:
+                # 报修工单类意图（"报修订单/报修单/工单进度"等）→ 查名下工单；须先于保修词判定
+                if any(keyword in user_input for keyword in self.TICKET_INTENT_KEYWORDS):
+                    return self._build_tickets_answer(phone)
+                if any(keyword in user_input for keyword in self.ORDER_INTENT_KEYWORDS):
+                    return self._build_warranty_answer(phone)
+                # 消息仅含手机号（客户在查询语境下直接发号）：按名下订单+报修记录给出总览
+                if self._is_phone_only_message(user_input, phone):
+                    return self._build_phone_overview_answer(phone)
 
             return None
         except Exception as e:
             print(f"查询意图处理失败（走RAG兜底）：{e}")
             return None
+
+    @staticmethod
+    def _is_phone_only_message(user_input: str, phone: str) -> bool:
+        """判断消息去掉手机号后是否不含其他业务语义（仅少量助词/标点）"""
+        remain = re.sub(r"1\d{10}", " ", user_input)
+        remain = re.sub(r"[\s\d\W_]", "", remain)
+        remain = re.sub(r"我|你|的|了|是|在|请|帮|查|看|下|一|就|这|那|给|找|报|修|单|号|么|吗|呢", "", remain)
+        return len(remain) <= 1
 
     def _extract_ticket_no(self, user_input: str):
         """提取报修单号（AX开头，可能不带AX）"""
@@ -164,6 +180,27 @@ class ConsultationProcessor:
         parts.append("如需其他帮助，随时告诉我。")
         return "".join(parts)
 
+    def _build_tickets_answer(self, phone: str) -> str:
+        """按手机号查询名下报修工单列表并生成答复"""
+        from services.ticket_service import TicketService
+        tickets = TicketService().list_tickets(phone=phone)
+
+        if not tickets:
+            return (f"未查询到手机号 {phone} 名下的报修工单。如确有报修记录，请核对手机号或提供报修单号"
+                    f"（如 AX20260903001），也可拨打售后热线400-820-9000为您人工查询。")
+
+        lines = [f"手机号 {phone} 名下共查询到 {len(tickets)} 条报修工单："]
+        for ticket in tickets:
+            status_label = self.TICKET_STATUS_LABELS.get(
+                ticket.get('status'), ticket.get('status') or '未知状态')
+            fault = ticket.get('fault_desc') or ''
+            lines.append(f"· {ticket['ticket_no']}（{ticket.get('product_type') or '家电'}"
+                         + (f"，故障：{fault[:20]}" if fault else "")
+                         + f"）：{status_label}。")
+
+        lines.append("如需查看某条工单的预约时间或工程师信息，提供对应单号即可，随时告诉我。")
+        return "\n".join(lines)
+
     def _build_warranty_answer(self, phone: str) -> str:
         """按手机号查询名下订单保修状态并生成答复"""
         from services.order_service import OrderService
@@ -191,6 +228,51 @@ class ConsultationProcessor:
 
         lines.append("如需了解具体维修费用或预约工程师上门，随时告诉我。")
         return "\n".join(lines)
+
+    def _build_phone_overview_answer(self, phone: str) -> str:
+        """消息仅含手机号：按名下订单保修状态与报修工单进度给出总览答复"""
+        from services.order_service import OrderService
+        from services.ticket_service import TicketService
+
+        orders = OrderService().get_warranty_info(phone)
+        tickets = TicketService().list_tickets(phone=phone)
+
+        if not orders and not tickets:
+            return (f"未查询到手机号 {phone} 名下的购买订单或报修记录。如确有购买或报修，请核对手机号，"
+                    f"或拨打售后热线400-820-9000为您人工查询。")
+
+        parts = [f"已为您查询手机号 {phone} 名下的记录。"]
+        if orders:
+            order_lines = [f"购买订单共 {len(orders)} 条："]
+            for order in orders:
+                model = order['brand_model'] or ''
+                purchase = order['purchase_date']
+                purchase_str = purchase.strftime('%Y年%m月%d日') if purchase else ''
+                end = order['warranty_end']
+                end_str = end.strftime('%Y年%m月%d日') if end else ''
+                if order['in_warranty']:
+                    order_lines.append(
+                        f"· {order['product_type']}（{model}，{purchase_str}购买）：在保修期内，保修至{end_str}"
+                        + (f"，剩余约{order['days_left']}天。" if order.get('days_left') else "。"))
+                else:
+                    order_lines.append(
+                        f"· {order['product_type']}（{model}，{purchase_str}购买）：已超出保修期（保修至{end_str}），"
+                        f"可安排付费维修。")
+            parts.append("\n".join(order_lines))
+
+        if tickets:
+            ticket_lines = [f"报修工单共 {len(tickets)} 条："]
+            for ticket in tickets:
+                status_label = self.TICKET_STATUS_LABELS.get(
+                    ticket.get('status'), ticket.get('status') or '未知状态')
+                fault = ticket.get('fault_desc') or ''
+                ticket_lines.append(f"· {ticket['ticket_no']}（{ticket.get('product_type') or '家电'}"
+                                    + (f"，故障：{fault[:20]}" if fault else "")
+                                    + f"）：{status_label}。")
+            parts.append("\n".join(ticket_lines))
+
+        parts.append("如需了解保修详情、报修进度或预约工程师上门，随时告诉我。")
+        return "\n".join(parts)
 
     async def _record_consultation_behavior(self, user_input: str, knowledge_docs: list,
                                             session_id: str, user_id: Optional[str] = None):

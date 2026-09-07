@@ -5,8 +5,6 @@ M15 权限与安全治理：风险分级策略（全离线，不触网不触 LLM
 未知工具保守处理、HTTP 方法分级、确认门槛。
 """
 
-import pytest
-
 from agents.supervisor.tool_registry import SupervisorToolRegistry
 from services.permission_policy import (
     RISK_CONFIRM,

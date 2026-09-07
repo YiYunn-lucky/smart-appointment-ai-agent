@@ -12,7 +12,6 @@ from services.engineer_service import EngineerService
 from services.recommendation_service import RecommendationService
 from typing import List, Optional
 import logging
-import asyncio
 
 # 导入路由
 from api import api_routers

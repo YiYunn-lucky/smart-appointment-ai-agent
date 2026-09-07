@@ -4,7 +4,7 @@
 负责构建家电报修流程中的各种响应消息
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 
 class MessageBuilder:
@@ -111,10 +111,30 @@ class MessageBuilder:
                 return f"\n机器人：抱歉，没有找到名为'{engineer_name}'的工程师。请确认工程师姓名，或由我为您推荐合适的工程师。\n"
         return "\n机器人：抱歉，该时间段暂时没有可上门的工程师，请选择其他时间段再试。\n"
 
-    def create_missing_info_questions(self, missing_info: List[str]) -> str:
-        """根据缺失信息创建询问"""
+    def create_missing_info_questions(self, missing_info: List[str],
+                                      appointment_history: Optional[Dict[str, Any]] = None) -> str:
+        """根据缺失信息创建询问，带简短确认开场（回显已收集的报修内容）"""
         questions = [self.missing_info_prompts.get(field, f"请补充{field}信息") for field in missing_info]
-        return "\n" + " ".join(questions) + "\n"
+        question_text = " ".join(questions)
+
+        if appointment_history:
+            product_type = appointment_history.get("product_type")
+            fault_desc = appointment_history.get("fault_desc")
+            summary = ""
+            if product_type and product_type != "未知":
+                if fault_desc and fault_desc != "未知" and fault_desc.startswith(product_type):
+                    summary = fault_desc
+                elif fault_desc and fault_desc != "未知":
+                    summary = f"{product_type}{fault_desc}"
+                else:
+                    summary = product_type
+            if summary:
+                opener = f"收到，已为您登记{summary}的报修。为尽快安排工程师上门，还需确认以下信息："
+            else:
+                opener = "好的，我来帮您登记上门报修，先确认几个信息："
+            return f"\n机器人：{opener} {question_text}\n"
+
+        return "\n" + question_text + "\n"
 
     def create_unrelated_message(self) -> str:
         """创建无关请求的消息"""

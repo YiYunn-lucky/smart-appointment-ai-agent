@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from typing import Any, Callable, Optional
 from config.model_provider import create_chat_model
-from config.constants import SharedState, StateEnum
+from config.constants import SharedState
 from .supervisor import SupervisorToolRegistry
 from .task_classification import (
     TaskClassifier,
@@ -87,16 +87,27 @@ class TaskClassificationAgent:
         async for token in self.classification_processor.process_task_stream(task):
             yield token
 
+    def _arm_suppressions(self, armed: bool) -> None:
+        """unrelated 转回防抖：转回 supervisor 重分类时，若再次命中同一子 Agent 则不再二次转回"""
+        if self.appointment_agent and hasattr(self.appointment_agent, '_suppress_unrelated_once'):
+            self.appointment_agent._suppress_unrelated_once = armed
+        if self.consultant_agent and hasattr(self.consultant_agent, '_suppress_not_consultation_once'):
+            self.consultant_agent._suppress_not_consultation_once = armed
+
     async def handle_unrelated(self, user_input):
         """处理无关请求（同步版本）"""
         # 与当前子任务无关的请求应该重新进行分类，而不是直接拒绝
         print(f"[DEBUG] 子任务机器人转交的请求：{user_input}")
 
         # 重新进行任务分类
-        result = ""
-        async for token in self.classification_processor.process_task_stream(user_input):
-            result += token
-        return result
+        self._arm_suppressions(True)
+        try:
+            result = ""
+            async for token in self.classification_processor.process_task_stream(user_input):
+                result += token
+            return result
+        finally:
+            self._arm_suppressions(False)
 
     async def handle_unrelated_async(self, user_input):
         """处理无关请求（异步流版本）"""
@@ -104,8 +115,12 @@ class TaskClassificationAgent:
         print(f"[DEBUG] 子任务机器人转交的请求：{user_input}")
 
         # 重新进行任务分类
-        async for token in self.classification_processor.process_task_stream(user_input):
-            yield token
+        self._arm_suppressions(True)
+        try:
+            async for token in self.classification_processor.process_task_stream(user_input):
+                yield token
+        finally:
+            self._arm_suppressions(False)
 
     # ===========================================
     # 扩展功能方法

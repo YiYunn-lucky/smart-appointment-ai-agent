@@ -7,7 +7,6 @@ pytest 公共夹具
 """
 
 import pytest
-from pathlib import Path
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 

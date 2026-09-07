@@ -6,7 +6,6 @@
 from fastapi import APIRouter, HTTPException
 from .core.response_models import (
     ConsultationRequest,
-    ConsultationResponse,
     DataResponse
 )
 
@@ -19,8 +18,8 @@ async def ask_consultation(request: ConsultationRequest):
     try:
         # 简化实现 - 直接导入需要的agent
         from agents.consultant_agent import ConsultantAgent
-        agent = ConsultantAgent()
-        result = await agent.process_consultation(request.question)
+        async with ConsultantAgent() as agent:
+            result = await agent.consult(request.question)
         
         return DataResponse(
             message="咨询处理成功",

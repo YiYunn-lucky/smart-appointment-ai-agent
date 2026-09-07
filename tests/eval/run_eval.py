@@ -111,7 +111,6 @@ def main() -> int:
 
     grand = {"passed": 0, "failed": 0}
     failures: list[tuple] = []
-    all_rows = []
 
     def report(group, passed, fails, times, extra=""):
         grand["passed"] += passed

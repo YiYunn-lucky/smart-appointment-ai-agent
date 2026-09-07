@@ -7,7 +7,7 @@
 """
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from db.db_router import DatabaseRouter
 from config.time_config import TimeConfig

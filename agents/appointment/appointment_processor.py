@@ -304,6 +304,6 @@ class AppointmentProcessor:
                 else:
                     missing.append(field)
 
-        reply = self.message_builder.create_missing_info_questions(missing)
+        reply = self.message_builder.create_missing_info_questions(missing, appointment_history)
         yield f"[THOUGHT][报修专员]用户的报修信息不完整，缺少：{', '.join(missing)}，需要询问用户补充"
         yield f"[REPLY][报修专员]{reply}"

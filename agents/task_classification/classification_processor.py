@@ -64,7 +64,7 @@ class ClassificationProcessor:
                 result='ok',
                 detail=f"category={category} 选中{tool.tool_id}",
             )
-        except Exception as e:
+        except Exception:
             # 审计异常静默：主管规划复盘已入内存 plan_log，不阻断路由
             pass
 

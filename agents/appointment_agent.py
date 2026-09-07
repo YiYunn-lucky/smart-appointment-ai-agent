@@ -30,6 +30,8 @@ class AppointmentAgent:
         self.session_id = session_id or str(uuid.uuid4())
         self.unrelated_callback = unrelated_callback
         self.state = None
+        # unrelated 转回防抖：supervisor 转回再分类仍判报修时置位，run_stream 消费后不再二次转回
+        self._suppress_unrelated_once = False
 
         # 初始化LLM：main 通道（话术/推荐文案生成）+ fast 通道（槽位抽取，未配置时回退 main）
         self.llm = self._initialize_llm()
@@ -131,9 +133,20 @@ class AppointmentAgent:
             data = self.input_parser.parse_data(ai_content)
             self.finished = self.appointment_processor.update_history_from_data(slots, data)
 
+            # 转回防抖：supervisor 转回再分类仍指向报修时，本次消息按报修内容继续（不再二次转回）
+            suppress_unrelated = self._suppress_unrelated_once
+            self._suppress_unrelated_once = False
+
             # 3. 处理与报修无关的请求
             # 如果正在等待用户确认推荐的替换工程师，不要转交给客服调度
             if data.get("unrelated", False) and not slots.get('awaiting_confirmation'):
+                if suppress_unrelated:
+                    # 已转回一轮且 supervisor 仍判定为报修意图：忽略误判的 unrelated，
+                    # 把本轮内容当作报修补充/更正继续追问缺失字段，避免"转回→再判→再转回"死循环
+                    async for token in self.appointment_processor.handle_incomplete_info(data, slots):
+                        yield token
+                    return
+
                 # 注意：这里不清空预约历史，保留用户已输入的信息
                 # 只设置状态为CLASSIFY，让系统转交给其他机器人处理
                 if self.state:
@@ -169,7 +182,7 @@ class AppointmentAgent:
             async for token in self.appointment_processor.handle_incomplete_info(data, slots):
                 yield token
 
-        except Exception as e:
+        except Exception:
             yield self.message_builder.create_parse_error_message()
 
     def _reset_state_after_appointment(self):

@@ -10,7 +10,6 @@ import asyncio
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Optional
 
 from agents.session.agent_session_registry import AgentSessionRegistry
 from agents.session.session_context import SessionContext
